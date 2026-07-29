@@ -21,5 +21,14 @@ pub use client::{
     connect_once, Client, ClientCommand, ClientConfig, ClientController, ClientEvent,
 };
 pub use peer::PeerHandle;
+// Re-export the quinn Endpoint so downstream crates (the daemon) can hold a
+// handle to close the server without depending on quinn directly.
+pub use quinn::Endpoint;
 pub use server::{Server, ServerConfig, ServerEvent};
 pub use stream::{read_message, write_message};
+
+/// Gracefully close a QUIC server endpoint (shuts down the accept loop).
+/// Wraps `quinn`'s `close()` so callers don't need a direct quinn dependency.
+pub fn close_endpoint(endpoint: &Endpoint) {
+    endpoint.close(quinn::VarInt::from_u32(0), &[]);
+}

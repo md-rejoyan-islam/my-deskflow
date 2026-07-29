@@ -5,13 +5,15 @@ use crate::session::Session;
 use anyhow::{anyhow, Context, Result};
 use inputsync_core::{Config, PeerId, ServerRole};
 use inputsync_network::{
-    tls, ClientConfig, ClientController, ClientEvent, Server, ServerConfig, ServerEvent,
+    close_endpoint, tls, ClientConfig, ClientController, ClientEvent, Endpoint, Server,
+    ServerConfig, ServerEvent,
 };
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::sync::mpsc;
+use tokio::task::JoinHandle;
 use tracing::{info, warn};
 
 pub struct RunArgs {
@@ -74,6 +76,10 @@ pub async fn run(args: RunArgs) -> Result<()> {
         peers: Vec::new(),
         client_controller: None,
         client_base: None,
+        server_controller: None,
+        listening: false,
+        listen_addr: None,
+        server_factory: None,
     }));
 
     // IPC server.
@@ -95,10 +101,17 @@ pub async fn run(args: RunArgs) -> Result<()> {
         config.clone(),
         local_peer_id,
     ));
-    let runtime_state_for_session = runtime_state.clone();
 
     // Network role: server or client.
-    let network_task = match config.role {
+    //
+    // SERVER starts IDLE: no QUIC listener, no input capture. The GUI's
+    // "Run" button sends StartServer over IPC, which binds the endpoint +
+    // spawns the session tree. This gives the user explicit control over
+    // when scanning begins.
+    //
+    // CLIENT starts idle too (existing behavior): no auto-dial unless a
+    // --connect address was given at startup.
+    let network_task: JoinHandle<()> = match config.role {
         ServerRole::Server => {
             let server_cfg = ServerConfig {
                 listen: config.network.listen,
@@ -106,47 +119,25 @@ pub async fn run(args: RunArgs) -> Result<()> {
                 local_peer_name: config.peer_name.clone(),
                 cert,
             };
-            let server = Server::bind(server_cfg).context("bind quic server")?;
-            let local_addr = server.local_addr().ok();
-            info!(addr = ?local_addr, "running as server");
+            info!(role = "server", "running as server (idle until GUI Run)");
 
-            let server_session = session.clone().spawn_server();
-            let (raw_tx, mut raw_rx) = mpsc::channel(64);
+            // Stash the factory so the IPC StartServer handler can bring the
+            // server up on demand.
+            {
+                let mut s = runtime_state.write();
+                s.server_factory = Some(ServerFactory {
+                    session: session.clone(),
+                    runtime_state: runtime_state.clone(),
+                    server_cfg,
+                });
+            }
 
-            let net = tokio::spawn(async move {
-                if let Err(e) = server.run(raw_tx).await {
-                    warn!(error = %e, "server task exited");
-                }
-            });
-
-            // Fan-out: track peers in DaemonState and forward to session.
-            let session_tx = server_session.peer_tx.clone();
-            let state = runtime_state_for_session.clone();
+            // Idle keep-alive: the daemon stays alive waiting for IPC commands.
+            // This task never completes on its own; shutdown is ctrl-c driven.
             tokio::spawn(async move {
-                while let Some(evt) = raw_rx.recv().await {
-                    match &evt {
-                        ServerEvent::Connected { handle, .. } => {
-                            state.write().peers.push(TrackedPeer {
-                                peer_id: handle.peer_id,
-                                name: handle.peer_name.clone(),
-                                remote_addr: handle
-                                    .remote_addr
-                                    .map(|a| a.to_string())
-                                    .unwrap_or_default(),
-                                connected_at: Instant::now(),
-                                last_rtt_ms: 0,
-                            });
-                        }
-                        ServerEvent::Disconnected { peer_id } => {
-                            state.write().peers.retain(|p| p.peer_id != *peer_id);
-                        }
-                    }
-                    if session_tx.send(evt).await.is_err() {
-                        break;
-                    }
-                }
-            });
-            net
+                let (_tx, mut rx) = mpsc::channel::<()>(1);
+                let _ = rx.recv().await;
+            })
         }
         ServerRole::Client => {
             // `connect` is now optional: `--role client` with no --connect
@@ -182,7 +173,7 @@ pub async fn run(args: RunArgs) -> Result<()> {
 
             let client_session = session.clone().spawn_client();
             let session_tx = client_session.peer_tx.clone();
-            let state = runtime_state_for_session.clone();
+            let state = runtime_state.clone();
 
             // Initial auto-dial if a connect address was configured at startup
             // (preserves the original `--connect` behavior).
@@ -195,7 +186,7 @@ pub async fn run(args: RunArgs) -> Result<()> {
                 });
             }
 
-            let net = tokio::spawn(async move {
+            tokio::spawn(async move {
                 // Drain controller events -> update DaemonState.peers and
                 // forward to the session. This replaces the per-attempt
                 // forwarder task; there is now exactly one for the daemon's
@@ -222,8 +213,7 @@ pub async fn run(args: RunArgs) -> Result<()> {
                         break;
                     }
                 }
-            });
-            net
+            })
         }
     };
 
@@ -240,6 +230,116 @@ pub async fn run(args: RunArgs) -> Result<()> {
         h.abort();
     }
 
+    Ok(())
+}
+
+/// Bring the QUIC server up from idle. Called by the IPC `StartServer`
+/// handler (GUI "Run" button). Binds the endpoint, spawns the session tree
+/// (capture + edge detection + peer fan-out), and records a `ServerController`
+/// in `DaemonState` so a later `StopServer` can tear it all down.
+pub fn start_server(state: &Arc<parking_lot::RwLock<DaemonState>>) -> Result<()> {
+    // Read everything we need under one lock.
+    let (session, server_cfg, runtime_state) = {
+        let s = state.read();
+        if s.server_controller.is_some() {
+            return Err(anyhow!("server is already running"));
+        }
+        let f = s
+            .server_factory
+            .as_ref()
+            .ok_or_else(|| anyhow!("daemon is not running as a server"))?;
+        (
+            f.session.clone(),
+            f.server_cfg.clone(),
+            f.runtime_state.clone(),
+        )
+    };
+
+    // Bind the QUIC endpoint. We keep an Endpoint clone to close on StopServer.
+    let (server, endpoint) = Server::bind(server_cfg).context("bind quic server")?;
+    let local_addr = server.local_addr().ok();
+    info!(addr = ?local_addr, "server started (listening)");
+
+    // Spawn the session tree (capture, edge detector, peer handling).
+    let server_session = session.spawn_server();
+    let (raw_tx, mut raw_rx) = mpsc::channel(64);
+
+    // Accept loop task.
+    let accept_task = tokio::spawn(async move {
+        if let Err(e) = server.run(raw_tx).await {
+            warn!(error = %e, "server task exited");
+        }
+    });
+
+    // Fan-out task: track peers in DaemonState and forward to the session.
+    let session_tx = server_session.peer_tx.clone();
+    let fanout_task = tokio::spawn(async move {
+        while let Some(evt) = raw_rx.recv().await {
+            match &evt {
+                ServerEvent::Connected { handle, .. } => {
+                    runtime_state.write().peers.push(TrackedPeer {
+                        peer_id: handle.peer_id,
+                        name: handle.peer_name.clone(),
+                        remote_addr: handle
+                            .remote_addr
+                            .map(|a| a.to_string())
+                            .unwrap_or_default(),
+                        connected_at: Instant::now(),
+                        last_rtt_ms: 0,
+                    });
+                }
+                ServerEvent::Disconnected { peer_id } => {
+                    runtime_state
+                        .write()
+                        .peers
+                        .retain(|p| p.peer_id != *peer_id);
+                }
+            }
+            if session_tx.send(evt).await.is_err() {
+                break;
+            }
+        }
+    });
+
+    // Record the controller so StopServer can tear it down.
+    {
+        let mut s = state.write();
+        s.server_controller = Some(Arc::new(ServerController {
+            endpoint,
+            tasks: vec![accept_task, fanout_task],
+        }));
+        s.listening = true;
+        s.capturing = true;
+        s.listen_addr = local_addr;
+    }
+    Ok(())
+}
+
+/// Tear the QUIC server down to idle. Called by the IPC `StopServer` handler
+/// (GUI "Stop" button). Idempotent: returns Ok if not running.
+pub async fn stop_server(state: &Arc<parking_lot::RwLock<DaemonState>>) -> Result<()> {
+    let controller = {
+        let mut s = state.write();
+        s.listening = false;
+        s.capturing = false;
+        s.listen_addr = None;
+        s.peers.clear();
+        s.server_controller.take()
+    };
+    if let Some(ctrl) = controller {
+        // Arc.try_unwrap should succeed since we took the only DaemonState ref.
+        match Arc::try_unwrap(ctrl) {
+            Ok(c) => c.stop().await,
+            Err(arc) => {
+                // Fallback: close via a cloned endpoint handle (Endpoint is Clone).
+                close_endpoint(&arc.endpoint);
+                for t in &arc.tasks {
+                    t.abort();
+                }
+            }
+        }
+        info!("server stopped (idle)");
+    }
     Ok(())
 }
 
@@ -297,6 +397,45 @@ pub struct DaemonState {
     /// The client role in config (copied at startup) so the IPC layer can
     /// build a fresh `ClientConfig` per dial without re-reading config.
     pub client_base: Option<ClientConfig>,
+    /// Present only when the server is actively listening (server role). The
+    /// IPC layer uses this to satisfy GUI-driven Run/Stop (StartServer/
+    /// StopServer) requests. None = daemon started idle.
+    pub server_controller: Option<Arc<ServerController>>,
+    /// True while the server is listening for clients (Set by StartServer,
+    /// cleared by StopServer). Reported to the GUI so it can render
+    /// "scanning" vs "idle".
+    pub listening: bool,
+    /// The bound server address, if listening. Shown to the user.
+    pub listen_addr: Option<SocketAddr>,
+    /// Shared handles the IPC layer needs to (re)start the server on demand.
+    pub server_factory: Option<ServerFactory>,
+}
+
+/// Everything the IPC `StartServer` handler needs to bring up the QUIC
+/// server + session. Built once at daemon startup; consumed per-run.
+pub struct ServerFactory {
+    pub session: Arc<Session>,
+    pub runtime_state: Arc<parking_lot::RwLock<DaemonState>>,
+    pub server_cfg: ServerConfig,
+}
+
+/// Owns the live QUIC server so it can be torn down via StopServer. Mirrors
+/// the client-side `ClientController` pattern.
+pub struct ServerController {
+    /// Clone of the endpoint; `close()` shuts the accept loop in `Server::run`.
+    pub endpoint: Endpoint,
+    /// Tasks spawned by StartServer — aborted on StopServer.
+    pub tasks: Vec<JoinHandle<()>>,
+}
+
+impl ServerController {
+    /// Gracefully stop the server: close the endpoint, abort all tasks.
+    pub async fn stop(self) {
+        close_endpoint(&self.endpoint);
+        for t in self.tasks {
+            t.abort();
+        }
+    }
 }
 
 #[derive(Clone)]

@@ -31,6 +31,12 @@ pub enum IpcRequest {
     Disconnect {
         peer: String,
     },
+    /// Start the QUIC server listening + begin capturing local input
+    /// (server role). The server starts IDLE on daemon launch; this is
+    /// triggered by the GUI's "Run" button.
+    StartServer,
+    /// Stop the QUIC server + input capture (server role). Idempotent.
+    StopServer,
     EmergencyStop,
     SubscribeEvents,
     GetLogs {
@@ -57,6 +63,12 @@ pub struct StatusReply {
     pub local_fingerprint: String,
     pub connected_peers: Vec<PeerSummary>,
     pub capturing: bool,
+    /// True when the server is actively listening for client connections
+    /// (false = daemon started idle, "Run" not yet pressed).
+    pub listening: bool,
+    /// The bound server address, if listening. The GUI shows this to the
+    /// user so they know where to point clients.
+    pub listen_addr: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

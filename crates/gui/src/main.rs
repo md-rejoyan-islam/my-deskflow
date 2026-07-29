@@ -50,6 +50,10 @@ enum Action {
         fingerprint: Option<String>,
     },
     Disconnect,
+    /// Server role: start listening + capturing (the "Run" button).
+    StartServer,
+    /// Server role: stop listening + capturing (the "Stop" button).
+    StopServer,
 }
 
 /// Result of an action, written from a background task into shared state.
@@ -168,10 +172,14 @@ impl InputSyncApp {
                 Action::Disconnect => IpcRequest::Disconnect {
                     peer: String::new(),
                 },
+                Action::StartServer => IpcRequest::StartServer,
+                Action::StopServer => IpcRequest::StopServer,
             };
             let label = match action {
                 Action::Connect { .. } => "Connect",
                 Action::Disconnect => "Disconnect",
+                Action::StartServer => "Start server",
+                Action::StopServer => "Stop server",
             };
             let res = match send_request(&socket, &req).await {
                 Ok(IpcResponse::Ok) => ActionResult {
@@ -251,6 +259,12 @@ impl eframe::App for InputSyncApp {
             ui.horizontal(|ui| {
                 ui.heading("InputSync");
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    // "Change role" re-opens the first-run role picker. The
+                    // chosen role is persisted + the daemon restarted to apply.
+                    if ui.button("🔄 Change role").clicked() {
+                        self.role_decided = false;
+                    }
+                    ui.separator();
                     ui.label(format!("socket: {}", self.socket_path.display()));
                 });
             });
@@ -323,7 +337,7 @@ impl eframe::App for InputSyncApp {
 
             match status.role.as_str() {
                 "client" => self.render_client_panel(ctx, ui, &status),
-                _ => self.render_server_panel(ui, &status),
+                _ => self.render_server_panel(ctx, ui, &status),
             }
 
             ui.separator();
@@ -486,31 +500,112 @@ impl InputSyncApp {
         }
     }
 
-    fn render_server_panel(&mut self, ui: &mut egui::Ui, status: &StatusReply) {
-        ui.heading("Server — listening for clients");
+    fn render_server_panel(
+        &mut self,
+        ctx: &egui::Context,
+        ui: &mut egui::Ui,
+        status: &StatusReply,
+    ) {
+        ui.heading("Server — share this keyboard & mouse");
+        ui.add_space(6.0);
 
-        egui::Grid::new("kv")
+        // Status line + Run/Stop control.
+        ui.horizontal(|ui| {
+            if status.listening {
+                ui.colored_label(
+                    egui::Color32::from_rgb(120, 220, 120),
+                    "● Scanning for clients…",
+                );
+            } else {
+                ui.colored_label(egui::Color32::from_rgb(220, 180, 80), "● Idle");
+            }
+        });
+
+        ui.add_space(4.0);
+
+        // The IP address + port the clients should connect to.
+        egui::Grid::new("server_info")
             .striped(true)
             .num_columns(2)
+            .spacing([10.0, 8.0])
             .show(ui, |ui| {
-                ui.label("Role");
-                ui.label(&status.role);
+                ui.label("Your IP address");
+                let ip_display = status
+                    .listen_addr
+                    .clone()
+                    .unwrap_or_else(|| format!("{} (click Run to start)", local_lan_ip()));
+                ui.monospace(&ip_display);
                 ui.end_row();
-                ui.label("Uptime");
-                ui.label(humantime(status.uptime_secs));
-                ui.end_row();
-                ui.label("Fingerprint");
-                ui.monospace(&status.local_fingerprint);
-                ui.end_row();
-                ui.label("Capturing");
-                ui.label(if status.capturing { "yes" } else { "no" });
+
+                ui.label("Port");
+                ui.monospace("24800");
                 ui.end_row();
             });
 
+        ui.add_space(4.0);
+
+        // Fingerprint — copyable.
+        ui.horizontal(|ui| {
+            ui.label("Fingerprint:");
+            ui.monospace(&status.local_fingerprint);
+            if ui.button("📋 Copy").clicked() {
+                ui.ctx().copy_text(status.local_fingerprint.clone());
+                let mut s = self.state.lock();
+                s.last_action = Some((
+                    ActionResult {
+                        ok: true,
+                        message: "Fingerprint copied to clipboard.".into(),
+                    },
+                    now_millis(),
+                ));
+            }
+        });
+
+        ui.add_space(8.0);
+
+        // Run / Stop buttons.
+        ui.horizontal(|ui| {
+            if !status.listening {
+                if ui
+                    .add(
+                        egui::Button::new("▶  Run")
+                            .min_size(egui::vec2(120.0, 36.0))
+                            .fill(egui::Color32::from_rgb(60, 140, 80)),
+                    )
+                    .on_hover_text("Start listening for client connections and capturing input.")
+                    .clicked()
+                {
+                    self.dispatch_action(ctx.clone(), Action::StartServer);
+                }
+            } else {
+                if ui
+                    .add(
+                        egui::Button::new("⏹  Stop")
+                            .min_size(egui::vec2(120.0, 36.0))
+                            .fill(egui::Color32::from_rgb(170, 60, 60)),
+                    )
+                    .on_hover_text("Stop listening and release input capture.")
+                    .clicked()
+                {
+                    self.dispatch_action(ctx.clone(), Action::StopServer);
+                }
+            }
+        });
+
+        ui.add_space(8.0);
         ui.separator();
-        ui.heading(format!("Clients ({})", status.connected_peers.len()));
+
+        // Connected clients.
+        ui.heading(format!(
+            "Connected clients ({})",
+            status.connected_peers.len()
+        ));
         if status.connected_peers.is_empty() {
-            ui.label("no clients connected");
+            if status.listening {
+                ui.label("Waiting for a client to connect…");
+            } else {
+                ui.label("Server is not running. Click Run to start.");
+            }
         } else {
             for p in &status.connected_peers {
                 ui.group(|ui| {
@@ -573,4 +668,23 @@ fn humantime(secs: u64) -> String {
     } else {
         format!("{s}s")
     }
+}
+
+/// Best-effort local LAN IPv4 address for display. Tries UDP socket trick
+/// (bind to a public IP, read local addr — doesn't actually send packets),
+/// falls back to the hostname resolution.
+fn local_lan_ip() -> String {
+    // The "connect a UDP socket to a faraway address" trick returns the local
+    // interface that would be used to reach it, without sending any packets.
+    if let Ok(socket) = std::net::UdpSocket::bind("0.0.0.0:0") {
+        if socket.connect("8.8.8.8:80").is_ok() {
+            if let Ok(addr) = socket.local_addr() {
+                let ip = addr.ip();
+                if !ip.is_loopback() && !ip.is_unspecified() {
+                    return ip.to_string();
+                }
+            }
+        }
+    }
+    "unknown".to_string()
 }

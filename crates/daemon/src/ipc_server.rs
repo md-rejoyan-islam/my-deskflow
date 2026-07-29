@@ -1,4 +1,4 @@
-use crate::app::DaemonState;
+use crate::app::{self, DaemonState};
 use inputsync_ipc::{IpcListener, IpcRequest, IpcResponse, PeerSummary, StatusReply};
 use std::net::SocketAddr;
 use std::str::FromStr;
@@ -19,7 +19,7 @@ pub async fn run(listener: IpcListener, state: Arc<parking_lot::RwLock<DaemonSta
                                 return;
                             }
                         };
-                        let resp = handle_request(req, &state);
+                        let resp = handle_request(req, &state).await;
                         if let Err(e) = conn.write_response(&resp).await {
                             warn!(error = %e, "failed to write ipc response");
                             return;
@@ -35,7 +35,12 @@ pub async fn run(listener: IpcListener, state: Arc<parking_lot::RwLock<DaemonSta
     }
 }
 
-fn handle_request(req: IpcRequest, state: &Arc<parking_lot::RwLock<DaemonState>>) -> IpcResponse {
+/// Most requests are synchronous; StartServer/StopServer touch async teardown
+/// so the handler is async.
+async fn handle_request(
+    req: IpcRequest,
+    state: &Arc<parking_lot::RwLock<DaemonState>>,
+) -> IpcResponse {
     match req {
         IpcRequest::GetStatus => {
             let s = state.read();
@@ -57,6 +62,8 @@ fn handle_request(req: IpcRequest, state: &Arc<parking_lot::RwLock<DaemonState>>
                 local_fingerprint: s.fingerprint.clone(),
                 connected_peers: peers,
                 capturing: s.capturing,
+                listening: s.listening,
+                listen_addr: s.listen_addr.map(|a| a.to_string()),
             })
         }
         IpcRequest::GetConfig => IpcResponse::Config(state.read().config.clone()),
@@ -83,6 +90,18 @@ fn handle_request(req: IpcRequest, state: &Arc<parking_lot::RwLock<DaemonState>>
                 },
             }
         }
+        IpcRequest::StartServer => match app::start_server(state) {
+            Ok(()) => IpcResponse::Ok,
+            Err(e) => IpcResponse::Error {
+                message: format!("{e:#}"),
+            },
+        },
+        IpcRequest::StopServer => match app::stop_server(state).await {
+            Ok(()) => IpcResponse::Ok,
+            Err(e) => IpcResponse::Error {
+                message: format!("{e:#}"),
+            },
+        },
         IpcRequest::EmergencyStop => {
             state.write().capturing = false;
             IpcResponse::Ok

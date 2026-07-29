@@ -24,7 +24,11 @@ pub struct Server {
 }
 
 impl Server {
-    pub fn bind(cfg: ServerConfig) -> Result<Self> {
+    /// Bind the QUIC server endpoint. Returns the `Server` (to run the accept
+    /// loop) AND a clone of the underlying `Endpoint`, which the caller keeps
+    /// so it can call `endpoint.close(...)` to gracefully shut the server down
+    /// — `run()` consumes `self`, so the clone is the only handle left.
+    pub fn bind(cfg: ServerConfig) -> Result<(Self, Endpoint)> {
         let rustls_cfg = tls::server_rustls_config(&cfg.cert)?;
         let qsc = quinn::crypto::rustls::QuicServerConfig::try_from(rustls_cfg)
             .map_err(|e| Error::Network(format!("quic server: {e}")))?;
@@ -39,11 +43,14 @@ impl Server {
 
         let fingerprint = cfg.cert.fingerprint_hex.clone();
         tracing::info!(addr = %cfg.listen, fingerprint = %fingerprint, "QUIC server listening");
-        Ok(Self {
+        Ok((
+            Self {
+                endpoint: endpoint.clone(),
+                fingerprint,
+                cfg,
+            },
             endpoint,
-            fingerprint,
-            cfg,
-        })
+        ))
     }
 
     pub fn fingerprint(&self) -> &str {
