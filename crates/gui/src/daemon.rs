@@ -114,6 +114,8 @@ impl Drop for DaemonSupervisor {
 }
 
 /// Platform-specific child configuration: detached stdio + no console window.
+/// stderr is redirected to a log file so daemon crashes can be diagnosed
+/// (otherwise the GUI swallows all daemon output).
 fn configure_detached(cmd: &mut Command) {
     #[cfg(windows)]
     {
@@ -128,9 +130,30 @@ fn configure_detached(cmd: &mut Command) {
         // GUI's Ctrl-C (it has its own shutdown handling via IPC Shutdown).
         cmd.process_group(0);
     }
-    // Discard stdout/stderr on both platforms (daemon logs to its own files).
-    cmd.stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null());
+    // stdout -> null. stderr -> a rotating log file next to the config so a
+    // daemon crash leaves a trace the user (and we) can read.
+    cmd.stdout(std::process::Stdio::null());
+    if let Some(log) = daemon_log_path() {
+        // Append so we keep history across restarts; ignore open errors
+        // (falls back to inheriting stderr, which is harmless).
+        if let Ok(file) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&log)
+        {
+            cmd.stderr(std::process::Stdio::from(file));
+        }
+    }
+}
+
+/// Where the GUI redirects the daemon's stderr. Lives next to the config so
+/// it's easy to find: ~/.config/inputsync/daemon.stderr.log (or the OS
+/// equivalent).
+pub fn daemon_log_path() -> Option<PathBuf> {
+    let dirs = directories::ProjectDirs::from("org", "InputSync", "InputSync")?;
+    let dir = dirs.config_dir().to_path_buf();
+    std::fs::create_dir_all(&dir).ok()?;
+    Some(dir.join("daemon.stderr.log"))
 }
 
 /// Locate the daemon binary. Search order, most-installed first:

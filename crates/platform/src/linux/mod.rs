@@ -12,9 +12,27 @@ use std::sync::Arc;
 pub use inject::LinuxInject;
 
 pub fn new() -> Result<Box<dyn Platform>> {
+    // The inject backend opens /dev/uinput, which can fail if the user isn't
+    // in the `uinput` group (haven't logged out/in yet) or the module isn't
+    // loaded. We must NOT crash the daemon over this — the daemon needs to
+    // stay alive so the GUI can show status. Fall back to a no-op inject and
+    // log loudly; capture is already a stub on Linux.
+    let inject: Arc<dyn Inject> = match LinuxInject::new() {
+        Ok(i) => Arc::new(i),
+        Err(e) => {
+            tracing::error!(
+                error = %e,
+                "failed to initialize /dev/uinput injection; \
+                 input injection will not work until you log out/in \
+                 (for the uinput group) or load the uinput kernel module. \
+                 The daemon will keep running so the GUI stays reachable."
+            );
+            Arc::new(NullInject)
+        }
+    };
     Ok(Box::new(LinuxPlatform {
         capture: Arc::new(LinuxCapture::new()),
-        inject: Arc::new(LinuxInject::new()?),
+        inject,
     }))
 }
 
@@ -54,7 +72,7 @@ fn hostname() -> String {
 
 pub struct LinuxPlatform {
     capture: Arc<LinuxCapture>,
-    inject: Arc<LinuxInject>,
+    inject: Arc<dyn Inject>,
 }
 
 impl Platform for LinuxPlatform {
@@ -66,6 +84,22 @@ impl Platform for LinuxPlatform {
     }
     fn inject(&self) -> Arc<dyn Inject> {
         self.inject.clone()
+    }
+}
+
+/// No-op inject backend used as a fallback when `/dev/uinput` can't be opened
+/// (e.g. user hasn't logged out/in for the `uinput` group yet). Keeps the
+/// daemon alive so the GUI stays reachable; injection silently does nothing.
+struct NullInject;
+
+#[async_trait]
+impl Inject for NullInject {
+    async fn inject(&self, _event: InputEvent) -> Result<()> {
+        // Silently drop — logged once at startup.
+        Ok(())
+    }
+    async fn release_all_modifiers(&self) -> Result<()> {
+        Ok(())
     }
 }
 

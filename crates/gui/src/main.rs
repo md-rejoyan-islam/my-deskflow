@@ -327,6 +327,9 @@ impl eframe::App for InputSyncApp {
                         }
                     }
                 });
+                if let Some(log) = daemon::daemon_log_path() {
+                    ui.label(format!("Daemon log: {}", log.display()));
+                }
                 return;
             }
             let Some(status) = status else {
