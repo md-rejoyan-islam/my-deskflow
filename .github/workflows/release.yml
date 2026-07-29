@@ -124,15 +124,16 @@ jobs:
       - name: Build release binaries
         run: cargo build --release
 
-      - name: Install WiX Toolset v3 (required by cargo-wix)
-        # cargo-wix 0.3.x only supports WiX v3. The windows-latest runner ships
-        # WiX v5+ by default whose candle.exe rejects v3 namespace XML.
-        # Pin v3.14.1 (latest v3 maintenance release) via Chocolatey.
+      - name: Ensure WiX Toolset v3 is available
+        # cargo-wix 0.3.x needs WiX v3 candle.exe/light.exe.
+        # windows-latest may already have v3.14.1 pre-installed, so use --force
+        # to make choco idempotent (it returns exit 1 if already installed).
         shell: pwsh
         run: |
-          choco install wixtoolset --version=3.14.1 --no-progress
-          # Prepend WiX v3 bin to GITHUB_PATH so subsequent steps pick it up.
           $wixBin = "C:\Program Files (x86)\WiX Toolset v3.14\bin"
+          if (-not (Test-Path "$wixBin\candle.exe")) {
+            choco install wixtoolset --version=3.14.1 --no-progress --force
+          }
           Add-Content -Path $env:GITHUB_PATH -Value $wixBin
           $env:PATH = "$wixBin;$env:PATH"
           Write-Host "candle.exe location:"
