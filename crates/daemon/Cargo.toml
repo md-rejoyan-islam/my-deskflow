@@ -94,8 +94,7 @@ libX11 = "*"
 libXrandr = "*"
 
 # --- .msi (Windows) -------------------------------------------------------
-[package.metadata.wix]
-# Points cargo-wix at our hand-written WiX template (installs all 3 exes).
-# The template uses $(var.BuildDir) and $(var.ProjectDir), supplied by
-# cargo-wix at light/candle time.
-input-cabinet = "InputSync.cab"
+# No [package.metadata.wix] needed: cargo-wix finds the WiX source at its
+# default location, `wix/main.wxs` next to this Cargo.toml
+# (crates/daemon/wix/main.wxs). The template uses $(var.CargoTargetBinDir),
+# which cargo-wix substitutes with target/release at candle/light time.
