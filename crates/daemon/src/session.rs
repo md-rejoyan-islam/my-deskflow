@@ -149,8 +149,27 @@ impl Session {
         let cfg = self.config.clone();
         let clipboard = self.clipboard.clone();
         let filetransfer = self.filetransfer.clone();
+
+        // The client also polls its OS clipboard and advertises changes to the
+        // server — this gives bidirectional clipboard sync (copy on client →
+        // paste on server, and vice versa). Without this, only the server's
+        // clipboard was ever broadcast.
+        let client_peers: Arc<Mutex<Vec<PeerHandle>>> = Arc::new(Mutex::new(Vec::new()));
+        if cfg.clipboard.enabled {
+            self.clipboard.spawn_poll_loop(client_peers.clone());
+        }
+
+        let client_peers2 = client_peers.clone();
         tokio::spawn(async move {
-            handle_peer_events_client(peer_rx, platform, cfg, clipboard, filetransfer).await;
+            handle_peer_events_client(
+                peer_rx,
+                platform,
+                cfg,
+                clipboard,
+                filetransfer,
+                client_peers2,
+            )
+            .await;
         });
         ClientSession { peer_tx }
     }
@@ -343,11 +362,15 @@ async fn handle_peer_events_client(
     cfg: Config,
     clipboard: Arc<ClipboardManager>,
     filetransfer: Arc<FileTransferManager>,
+    peers: Arc<Mutex<Vec<PeerHandle>>>,
 ) {
     while let Some(evt) = rx.recv().await {
         match evt {
             ClientEvent::Connected { handle, inbound } => {
                 info!(peer_id = %handle.peer_id, name = %handle.peer_name, "connected to server");
+                // Track the server peer so the clipboard poll loop can
+                // broadcast clipboard changes to it (bidirectional sync).
+                peers.lock().push(handle.clone());
                 spawn_heartbeat(handle.clone(), cfg.network.heartbeat_interval_ms);
                 let platform = platform.clone();
                 let clipboard = clipboard.clone();
@@ -358,6 +381,7 @@ async fn handle_peer_events_client(
             }
             ClientEvent::Disconnected { peer_id } => {
                 info!(%peer_id, "server disconnected");
+                peers.lock().retain(|p| p.peer_id != peer_id);
             }
         }
     }

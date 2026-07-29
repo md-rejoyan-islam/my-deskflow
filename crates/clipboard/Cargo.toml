@@ -14,3 +14,4 @@ blake3 = { workspace = true }
 tracing = { workspace = true }
 async-trait = { workspace = true }
 arboard = "3"
+image = { version = "0.25", default-features = false, features = ["png"] }

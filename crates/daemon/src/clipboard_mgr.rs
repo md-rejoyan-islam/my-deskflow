@@ -47,12 +47,25 @@ impl ClipboardManager {
             interval.tick().await;
             loop {
                 interval.tick().await;
-                // Only check text for v1 (PNG handling is incomplete).
-                let bytes = match backend.read(ClipboardFormat::PlainText).await {
-                    Ok(b) if !b.is_empty() => b,
-                    _ => continue,
+
+                // Detect what's on the clipboard: text first, then image.
+                // We advertise whichever format has content (preferring text).
+                let (formats, hash) = match backend.read(ClipboardFormat::PlainText).await {
+                    Ok(b) if !b.is_empty() => {
+                        let h = hash_content(&b);
+                        (vec![ClipboardFormat::PlainText], h)
+                    }
+                    _ => {
+                        // No text — try an image.
+                        match backend.read(ClipboardFormat::Png).await {
+                            Ok(b) if !b.is_empty() => {
+                                let h = hash_content(&b);
+                                (vec![ClipboardFormat::Png], h)
+                            }
+                            _ => continue, // clipboard is empty or unreadable
+                        }
+                    }
                 };
-                let hash = hash_content(&bytes);
 
                 if last_hash.lock().as_ref() == Some(&hash) {
                     continue;
@@ -72,7 +85,7 @@ impl ClipboardManager {
                 for peer in active_peers {
                     let _ = peer
                         .send(Message::ClipboardFormats {
-                            formats: vec![ClipboardFormat::PlainText],
+                            formats: formats.clone(),
                             hash,
                         })
                         .await;
@@ -85,14 +98,11 @@ impl ClipboardManager {
     pub async fn handle_inbound(&self, peer: &PeerHandle, msg: Message) {
         match msg {
             Message::ClipboardFormats { formats, hash } => {
-                // Peer announced new clipboard. Auto-pull text.
-                if formats.contains(&ClipboardFormat::PlainText) {
+                // Peer announced new clipboard content. Auto-pull whichever
+                // format they advertised (text or image).
+                for fmt in &formats {
                     self.originators.record(hash, peer.peer_id);
-                    let _ = peer
-                        .send(Message::ClipboardRequest {
-                            format: ClipboardFormat::PlainText,
-                        })
-                        .await;
+                    let _ = peer.send(Message::ClipboardRequest { format: *fmt }).await;
                 }
             }
             Message::ClipboardRequest { format } => {

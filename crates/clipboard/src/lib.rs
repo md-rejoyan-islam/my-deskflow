@@ -99,8 +99,18 @@ impl ClipboardBackend for ArboardBackend {
                 Ok(text.into_bytes())
             }
             ClipboardFormat::Png => {
+                // Read the image from the OS clipboard and re-encode as PNG
+                // bytes for transfer. The write path decodes it back.
                 let img = map_ab(c.get_image())?;
-                Ok(img.bytes.into_owned())
+                let w = img.width as u32;
+                let h = img.height as u32;
+                let rgba = image::RgbaImage::from_raw(w, h, img.bytes.into_owned())
+                    .ok_or_else(|| Error::Other("clipboard image: bad dimensions".into()))?;
+                let mut buf = Vec::with_capacity(8 * 1024);
+                image::DynamicImage::ImageRgba8(rgba)
+                    .write_to(&mut std::io::Cursor::new(&mut buf), image::ImageFormat::Png)
+                    .map_err(|e| Error::Other(format!("encode png: {e}")))?;
+                Ok(buf)
             }
             ClipboardFormat::Html | ClipboardFormat::Rtf | ClipboardFormat::UriList => Ok(vec![]),
         }
@@ -117,7 +127,24 @@ impl ClipboardBackend for ArboardBackend {
                 map_ab(c.set_text(text))?;
             }
             ClipboardFormat::Png => {
-                tracing::debug!("clipboard write png: not yet wired");
+                // arboard expects raw RGBA pixel data + dimensions. Decode the
+                // PNG bytes we received back into pixels.
+                match image::load_from_memory_with_format(&payload.bytes, image::ImageFormat::Png) {
+                    Ok(img) => {
+                        let rgba = img.to_rgba8();
+                        let w = rgba.width();
+                        let h = rgba.height();
+                        let img_data = arboard::ImageData {
+                            width: w as usize,
+                            height: h as usize,
+                            bytes: std::borrow::Cow::Owned(rgba.into_raw()),
+                        };
+                        map_ab(c.set_image(img_data))?;
+                    }
+                    Err(e) => {
+                        tracing::warn!(error = %e, "clipboard write png: decode failed");
+                    }
+                }
             }
             _ => {}
         }

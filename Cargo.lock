@@ -1504,6 +1504,7 @@ dependencies = [
  "arboard",
  "async-trait",
  "blake3",
+ "image",
  "inputsync-core",
  "inputsync-protocol",
  "parking_lot",
