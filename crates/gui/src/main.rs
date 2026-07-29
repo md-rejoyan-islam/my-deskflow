@@ -14,6 +14,7 @@
 //! IPC requests off the tokio runtime so the UI never blocks on the socket.
 
 mod daemon;
+mod theme;
 
 use anyhow::{Context, Result};
 use eframe::egui;
@@ -27,8 +28,8 @@ use std::time::Duration;
 fn main() -> eframe::Result<()> {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_inner_size([760.0, 560.0])
-            .with_min_inner_size([480.0, 360.0])
+            .with_inner_size([820.0, 600.0])
+            .with_min_inner_size([560.0, 420.0])
             .with_title("InputSync"),
         ..Default::default()
     };
@@ -36,7 +37,8 @@ fn main() -> eframe::Result<()> {
         "InputSync",
         options,
         Box::new(|cc| {
-            cc.egui_ctx.set_visuals(egui::Visuals::dark());
+            cc.egui_ctx.set_visuals(theme::visuals());
+            theme::style(&cc.egui_ctx);
             Ok(Box::new(InputSyncApp::new()))
         }),
     )
@@ -255,20 +257,27 @@ impl eframe::App for InputSyncApp {
             ctx.request_repaint_after(Duration::from_millis(500));
         }
 
-        egui::TopBottomPanel::top("top").show(ctx, |ui| {
-            ui.horizontal(|ui| {
-                ui.heading("InputSync");
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    // "Change role" re-opens the first-run role picker. The
-                    // chosen role is persisted + the daemon restarted to apply.
-                    if ui.button("🔄 Change role").clicked() {
-                        self.role_decided = false;
-                    }
-                    ui.separator();
-                    ui.label(format!("socket: {}", self.socket_path.display()));
+        egui::TopBottomPanel::top("top")
+            .exact_height(56.0)
+            .show_separator_line(false)
+            .show(ctx, |ui| {
+                ui.add_space(8.0);
+                ui.horizontal(|ui| {
+                    // App name in accent color, bold.
+                    ui.label(
+                        egui::RichText::new("◆  InputSync")
+                            .strong()
+                            .color(theme::ACCENT)
+                            .size(19.0),
+                    );
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if theme::ghost_button(ui, "🔄 Change role") {
+                            self.role_decided = false;
+                        }
+                    });
                 });
+                ui.add_space(4.0);
             });
-        });
 
         // First-run role picker overlay: takes over the whole panel until the
         // user chooses Server or Client.
@@ -284,21 +293,16 @@ impl eframe::App for InputSyncApp {
         }
 
         egui::CentralPanel::default().show(ctx, |ui| {
+            ui.add_space(8.0);
+
             // Surface a supervisor error (e.g. binary not found) prominently.
             if let Some(err) = &self.supervisor_error {
-                ui.colored_label(
-                    egui::Color32::LIGHT_RED,
-                    format!("daemon launch error: {err}"),
-                );
-                ui.label(
-                    "Could not start the daemon automatically. Install InputSync, or if running \
-                     from a build dir, make sure inputsync-daemon is next to inputsync-gui.",
-                );
-                if ui.button("Retry launch").clicked() {
+                error_card(ui, "Daemon launch error", err, Some("Could not start the daemon automatically. Install InputSync, or if running from a build dir, make sure inputsync-daemon is next to inputsync-gui."));
+                if theme::ghost_button(ui, "↻  Retry launch") {
                     self.supervisor_error = None;
                     let _ = self.supervisor.restart();
                 }
-                ui.separator();
+                return;
             }
 
             // Snapshot under a short lock; render from the copies.
@@ -314,43 +318,64 @@ impl eframe::App for InputSyncApp {
             };
 
             if let Some(err) = &error {
-                ui.colored_label(
-                    egui::Color32::LIGHT_RED,
-                    format!("daemon unreachable: {err}"),
-                );
-                ui.horizontal(|ui| {
-                    ui.label("The daemon isn't responding. You can restart it here:");
-                    if ui.button("Restart daemon").clicked() {
-                        match self.supervisor.restart() {
-                            Ok(()) => self.supervisor_error = None,
-                            Err(e) => self.supervisor_error = Some(format!("{e:#}")),
-                        }
+                error_card(ui, "Daemon unreachable", err, Some("The daemon isn't responding to the GUI. You can try restarting it."));
+                ui.add_space(8.0);
+                if theme::accent_button(ui, "↻  Restart daemon") {
+                    match self.supervisor.restart() {
+                        Ok(()) => self.supervisor_error = None,
+                        Err(e) => self.supervisor_error = Some(format!("{e:#}")),
                     }
-                });
+                }
                 if let Some(log) = daemon::daemon_log_path() {
-                    ui.label(format!("Daemon log: {}", log.display()));
+                    ui.add_space(8.0);
+                    theme::dim_label(ui, &format!("Daemon log: {}", log.display()));
                 }
                 return;
             }
             let Some(status) = status else {
-                ui.spinner();
-                ui.label("Connecting to daemon…");
+                ui.add_space(40.0);
+                ui.vertical_centered(|ui| {
+                    ui.spinner();
+                    ui.add_space(8.0);
+                    theme::dim_label(ui, "Connecting to daemon…");
+                });
                 return;
             };
 
+            ui.add_space(8.0);
             match status.role.as_str() {
                 "client" => self.render_client_panel(ctx, ui, &status),
                 _ => self.render_server_panel(ctx, ui, &status),
             }
 
-            ui.separator();
             self.render_action_status(ui, last_action);
 
-            ui.separator();
-            ui.add_space(4.0);
+            ui.add_space(12.0);
             render_footer(ui, &status);
         });
     }
+}
+
+/// Render an error banner as a red-bordered card with an icon.
+fn error_card(ui: &mut egui::Ui, title: &str, detail: &str, hint: Option<&str>) {
+    egui::Frame::group(ui.style())
+        .fill(theme::DANGER.linear_multiply(0.08))
+        .stroke(egui::Stroke::new(1.0, theme::DANGER.linear_multiply(0.5)))
+        .rounding(egui::Rounding::same(10.0))
+        .inner_margin(egui::Margin::same(16.0))
+        .show(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.label(egui::RichText::new("⚠").color(theme::DANGER).size(20.0));
+                ui.vertical(|ui| {
+                    ui.label(egui::RichText::new(title).strong().color(theme::DANGER));
+                    ui.label(egui::RichText::new(detail).color(theme::TEXT_PRIMARY));
+                    if let Some(h) = hint {
+                        ui.add_space(2.0);
+                        ui.label(egui::RichText::new(h).color(theme::TEXT_DIM).small());
+                    }
+                });
+            });
+        });
 }
 
 /// The first-run role picker. Takes over the central panel and asks the user
@@ -359,43 +384,112 @@ impl eframe::App for InputSyncApp {
 fn render_role_picker(ui: &mut egui::Ui, supervisor_error: &Option<String>) -> Option<ServerRole> {
     let mut picked = None;
     ui.vertical_centered(|ui| {
-        ui.add_space(40.0);
-        ui.heading("Welcome to InputSync");
-        ui.label("Share one keyboard and mouse across two computers.");
+        ui.add_space(50.0);
+        ui.label(
+            egui::RichText::new("Welcome to InputSync")
+                .heading()
+                .color(theme::TEXT_PRIMARY),
+        );
+        ui.add_space(4.0);
+        theme::dim_label(ui, "Share one keyboard and mouse across two computers.");
+        ui.add_space(32.0);
+        theme::dim_label(ui, "How should this computer be used?");
         ui.add_space(20.0);
-        ui.label("How should this computer be used?");
-        ui.add_space(16.0);
 
-        ui.horizontal(|ui| {
-            ui.add_space(80.0);
-            if ui
-                .add(egui::Button::new("🖥  Server").min_size(egui::vec2(140.0, 60.0)))
-                .on_hover_text(
-                    "This computer's keyboard and mouse will control others. \
-                     Run this on the machine you sit at.",
-                )
-                .clicked()
-            {
+        // Two large selectable cards side by side.
+        ui.horizontal_centered(|ui| {
+            ui.add_space(20.0);
+            // --- Server card ---
+            let server_clicked = role_card(
+                ui,
+                "🖥",
+                "Server",
+                "This computer's keyboard and mouse\nwill control others. Run this on\nthe machine you sit at.",
+                theme::ACCENT,
+            );
+            ui.add_space(16.0);
+            // --- Client card ---
+            let client_clicked = role_card(
+                ui,
+                "💻",
+                "Client",
+                "This computer will be controlled\nby a remote server. Run this on\nthe machine whose screen you want\nto reach.",
+                theme::TEXT_DIM,
+            );
+            if server_clicked {
                 picked = Some(ServerRole::Server);
             }
-            if ui
-                .add(egui::Button::new("💻  Client").min_size(egui::vec2(140.0, 60.0)))
-                .on_hover_text(
-                    "This computer will be controlled by a remote server. \
-                     Run this on the machine whose screen you want to reach.",
-                )
-                .clicked()
-            {
+            if client_clicked {
                 picked = Some(ServerRole::Client);
             }
         });
 
         if let Some(err) = supervisor_error {
-            ui.add_space(16.0);
-            ui.colored_label(egui::Color32::LIGHT_RED, format!("{err}"));
+            ui.add_space(20.0);
+            ui.label(egui::RichText::new(err).color(theme::DANGER));
         }
     });
     picked
+}
+
+/// A single large role-selection card. Returns true if clicked.
+fn role_card(
+    ui: &mut egui::Ui,
+    icon: &str,
+    title: &str,
+    desc: &str,
+    accent: egui::Color32,
+) -> bool {
+    let desired = egui::Vec2::new(260.0, 160.0);
+    let (rect, response) = ui.allocate_exact_size(desired, egui::Sense::click());
+    let hovered = response.hovered();
+    let fill = if hovered {
+        egui::Color32::from_rgb(28, 35, 48)
+    } else {
+        theme::BG_CARD
+    };
+    let stroke = if hovered {
+        egui::Stroke::new(2.0, accent)
+    } else {
+        egui::Stroke::new(1.0, theme::BORDER)
+    };
+    ui.painter()
+        .rect_filled(rect, egui::Rounding::same(14.0), fill);
+    ui.painter()
+        .rect_stroke(rect, egui::Rounding::same(14.0), stroke);
+
+    // Icon (large, centered-ish).
+    let icon_pos = egui::pos2(rect.center().x, rect.top() + 38.0);
+    ui.painter().text(
+        icon_pos,
+        egui::Align2::CENTER_CENTER,
+        icon,
+        egui::FontId::proportional(34.0),
+        accent,
+    );
+    // Title.
+    ui.painter().text(
+        egui::pos2(rect.center().x, rect.top() + 80.0),
+        egui::Align2::CENTER_CENTER,
+        title,
+        egui::FontId::proportional(18.0),
+        theme::TEXT_PRIMARY,
+    );
+    // Description (dim, smaller).
+    let galley = ui.fonts(|f| {
+        f.layout(
+            desc.to_string(),
+            egui::FontId::proportional(12.0),
+            theme::TEXT_DIM,
+            rect.width() - 24.0,
+        )
+    });
+    ui.painter().galley(
+        egui::pos2(rect.left() + 12.0, rect.top() + 104.0),
+        galley,
+        egui::Color32::TRANSPARENT,
+    );
+    response.clicked()
 }
 
 impl InputSyncApp {
@@ -405,100 +499,129 @@ impl InputSyncApp {
         ui: &mut egui::Ui,
         status: &StatusReply,
     ) {
-        ui.heading("Client — connect to a server");
-        ui.add_space(6.0);
+        theme::heading(ui, "Client");
+        theme::dim_label(ui, "Connect to a server to be controlled remotely.");
+        ui.add_space(16.0);
 
-        egui::Grid::new("conn_form")
-            .num_columns(2)
-            .spacing([10.0, 8.0])
-            .show(ui, |ui| {
-                ui.label("Server address");
-                ui.add(
-                    egui::TextEdit::singleline(&mut self.addr_input)
-                        .hint_text("192.168.1.50:24800")
-                        .desired_width(260.0)
-                        .clip_text(true),
-                );
-                ui.end_row();
-
-                ui.label("Server fingerprint");
-                ui.add(
-                    egui::TextEdit::singleline(&mut self.pin_input)
-                        .hint_text("paste the server's fingerprint hex")
-                        .desired_width(360.0)
-                        .code_editor()
-                        .clip_text(true),
-                );
-                ui.end_row();
-            });
-
-        ui.add_space(6.0);
-        ui.horizontal(|ui| {
-            let connect_clicked = ui
-                .add(egui::Button::new("Connect"))
-                .on_hover_text("Dial the server address above (replaces any current connection).")
-                .clicked();
-            let disconnect_clicked = ui
-                .add(egui::Button::new("Disconnect"))
-                .on_hover_text("Hang up the current connection.")
-                .clicked();
-
-            if connect_clicked {
-                let addr = self.addr_input.trim().to_string();
-                if addr.is_empty() {
-                    let mut s = self.state.lock();
-                    s.last_action = Some((
-                        ActionResult {
-                            ok: false,
-                            message: "Enter a server address first.".into(),
-                        },
-                        now_millis(),
-                    ));
-                } else {
-                    let fp = {
-                        let t = self.pin_input.trim().to_string();
-                        if t.is_empty() {
-                            None
-                        } else {
-                            Some(t)
-                        }
-                    };
-                    self.dispatch_action(
-                        ctx.clone(),
-                        Action::Connect {
-                            addr,
-                            fingerprint: fp,
-                        },
+        // --- Connection form card ---
+        theme::card(ui, |ui| {
+            egui::Grid::new("conn_form")
+                .num_columns(2)
+                .spacing([16.0, 12.0])
+                .show(ui, |ui| {
+                    theme::dim_label(ui, "Server address");
+                    ui.add(
+                        egui::TextEdit::singleline(&mut self.addr_input)
+                            .hint_text("192.168.1.50:24800")
+                            .desired_width(280.0)
+                            .clip_text(true),
                     );
+                    ui.end_row();
+
+                    theme::dim_label(ui, "Fingerprint");
+                    ui.add(
+                        egui::TextEdit::singleline(&mut self.pin_input)
+                            .hint_text("paste the server's fingerprint hex")
+                            .desired_width(280.0)
+                            .code_editor()
+                            .clip_text(true),
+                    );
+                    ui.end_row();
+                });
+
+            ui.add_space(8.0);
+            ui.horizontal(|ui| {
+                let connect_clicked = theme::accent_button(ui, "Connect");
+                let disconnect_clicked = theme::danger_button(ui, "Disconnect");
+
+                if connect_clicked {
+                    let addr = self.addr_input.trim().to_string();
+                    if addr.is_empty() {
+                        let mut s = self.state.lock();
+                        s.last_action = Some((
+                            ActionResult {
+                                ok: false,
+                                message: "Enter a server address first.".into(),
+                            },
+                            now_millis(),
+                        ));
+                    } else {
+                        let fp = {
+                            let t = self.pin_input.trim().to_string();
+                            if t.is_empty() {
+                                None
+                            } else {
+                                Some(t)
+                            }
+                        };
+                        self.dispatch_action(
+                            ctx.clone(),
+                            Action::Connect {
+                                addr,
+                                fingerprint: fp,
+                            },
+                        );
+                    }
                 }
-            }
-            if disconnect_clicked {
-                self.dispatch_action(ctx.clone(), Action::Disconnect);
-            }
+                if disconnect_clicked {
+                    self.dispatch_action(ctx.clone(), Action::Disconnect);
+                }
+            });
         });
 
-        ui.add_space(10.0);
-        ui.separator();
+        ui.add_space(12.0);
 
-        // Live connection state.
-        ui.heading(format!("Connection ({})", status.connected_peers.len()));
+        // --- Connection state ---
+        theme::heading(
+            ui,
+            &format!("Connection ({})", status.connected_peers.len()),
+        );
+        ui.add_space(6.0);
         if status.connected_peers.is_empty() {
-            ui.label("Not connected — fill the form and click Connect.");
+            theme::card(ui, |ui| {
+                theme::dim_label(ui, "Not connected — fill the form and click Connect.");
+            });
         } else {
             for p in &status.connected_peers {
-                ui.group(|ui| {
+                theme::card(ui, |ui| {
                     ui.horizontal(|ui| {
-                        ui.label("●");
-                        ui.label(&p.name);
-                        ui.monospace(&p.peer_id);
+                        ui.painter().circle_filled(
+                            ui.next_widget_position() + egui::vec2(5.0, 8.0),
+                            4.0,
+                            theme::SUCCESS,
+                        );
+                        ui.add_space(12.0);
+                        ui.label(
+                            egui::RichText::new(&p.name)
+                                .strong()
+                                .color(theme::TEXT_PRIMARY),
+                        );
+                        ui.label(
+                            egui::RichText::new(&p.peer_id)
+                                .color(theme::TEXT_DIM)
+                                .small()
+                                .monospace(),
+                        );
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            ui.label(
+                                egui::RichText::new(&format!("rtt {}ms", p.last_rtt_ms))
+                                    .color(theme::TEXT_DIM)
+                                    .small(),
+                            );
+                        });
                     });
-                    ui.label(format!("remote: {}", p.remote_addr));
-                    ui.label(format!(
-                        "connected: {}  •  rtt: {} ms",
-                        humantime(p.connected_secs),
-                        p.last_rtt_ms
-                    ));
+                    ui.add_space(2.0);
+                    ui.label(
+                        egui::RichText::new(&format!(
+                            "remote {}  •  connected {}",
+                            p.remote_addr,
+                            humantime(p.connected_secs)
+                        ))
+                        .color(theme::TEXT_DIM)
+                        .small(),
+                    );
                 });
+                ui.add_space(6.0);
             }
         }
     }
@@ -509,121 +632,144 @@ impl InputSyncApp {
         ui: &mut egui::Ui,
         status: &StatusReply,
     ) {
-        ui.heading("Server — share this keyboard & mouse");
-        ui.add_space(6.0);
+        theme::heading(ui, "Server");
+        theme::dim_label(ui, "Share this keyboard & mouse with other computers.");
+        ui.add_space(16.0);
 
-        // Status line + Run/Stop control.
-        ui.horizontal(|ui| {
-            if status.listening {
-                ui.colored_label(
-                    egui::Color32::from_rgb(120, 220, 120),
-                    "● Scanning for clients…",
-                );
-            } else {
-                ui.colored_label(egui::Color32::from_rgb(220, 180, 80), "● Idle");
-            }
-        });
-
-        ui.add_space(4.0);
-
-        // The IP address + port the clients should connect to.
-        egui::Grid::new("server_info")
-            .striped(true)
-            .num_columns(2)
-            .spacing([10.0, 8.0])
-            .show(ui, |ui| {
-                ui.label("Your IP address");
-                let ip_display = status
-                    .listen_addr
-                    .clone()
-                    .unwrap_or_else(|| format!("{} (click Run to start)", local_lan_ip()));
-                ui.monospace(&ip_display);
-                ui.end_row();
-
-                ui.label("Port");
-                ui.monospace("24800");
-                ui.end_row();
+        // --- Status + Run/Stop card ---
+        theme::card(ui, |ui| {
+            ui.horizontal(|ui| {
+                if status.listening {
+                    theme::pill(ui, "● Scanning for clients", theme::SUCCESS);
+                } else {
+                    theme::pill(ui, "● Idle", theme::WARNING);
+                }
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if !status.listening {
+                        if theme::accent_button(ui, "▶  Run") {
+                            self.dispatch_action(ctx.clone(), Action::StartServer);
+                        }
+                    } else if theme::danger_button(ui, "⏹  Stop") {
+                        self.dispatch_action(ctx.clone(), Action::StopServer);
+                    }
+                });
             });
-
-        ui.add_space(4.0);
-
-        // Fingerprint — copyable.
-        ui.horizontal(|ui| {
-            ui.label("Fingerprint:");
-            ui.monospace(&status.local_fingerprint);
-            if ui.button("📋 Copy").clicked() {
-                ui.ctx().copy_text(status.local_fingerprint.clone());
-                let mut s = self.state.lock();
-                s.last_action = Some((
-                    ActionResult {
-                        ok: true,
-                        message: "Fingerprint copied to clipboard.".into(),
-                    },
-                    now_millis(),
-                ));
-            }
         });
 
-        ui.add_space(8.0);
+        ui.add_space(12.0);
 
-        // Run / Stop buttons.
-        ui.horizontal(|ui| {
-            if !status.listening {
-                if ui
-                    .add(
-                        egui::Button::new("▶  Run")
-                            .min_size(egui::vec2(120.0, 36.0))
-                            .fill(egui::Color32::from_rgb(60, 140, 80)),
-                    )
-                    .on_hover_text("Start listening for client connections and capturing input.")
-                    .clicked()
-                {
-                    self.dispatch_action(ctx.clone(), Action::StartServer);
-                }
-            } else {
-                if ui
-                    .add(
-                        egui::Button::new("⏹  Stop")
-                            .min_size(egui::vec2(120.0, 36.0))
-                            .fill(egui::Color32::from_rgb(170, 60, 60)),
-                    )
-                    .on_hover_text("Stop listening and release input capture.")
-                    .clicked()
-                {
-                    self.dispatch_action(ctx.clone(), Action::StopServer);
-                }
-            }
+        // --- Connection info card (IP, port, fingerprint) ---
+        theme::card(ui, |ui| {
+            egui::Grid::new("server_info")
+                .num_columns(2)
+                .spacing([16.0, 10.0])
+                .show(ui, |ui| {
+                    theme::dim_label(ui, "Your IP address");
+                    let ip_display = status
+                        .listen_addr
+                        .clone()
+                        .unwrap_or_else(|| format!("{}  (click Run)", local_lan_ip()));
+                    ui.label(
+                        egui::RichText::new(&ip_display)
+                            .color(theme::TEXT_PRIMARY)
+                            .monospace(),
+                    );
+                    ui.end_row();
+
+                    theme::dim_label(ui, "Port");
+                    ui.label(
+                        egui::RichText::new("24800")
+                            .color(theme::TEXT_PRIMARY)
+                            .monospace(),
+                    );
+                    ui.end_row();
+
+                    theme::dim_label(ui, "Fingerprint");
+                    ui.horizontal(|ui| {
+                        let fp = if status.local_fingerprint.len() > 24 {
+                            format!(
+                                "{}…{}",
+                                &status.local_fingerprint[..12],
+                                &status.local_fingerprint[status.local_fingerprint.len() - 8..]
+                            )
+                        } else {
+                            status.local_fingerprint.clone()
+                        };
+                        ui.label(
+                            egui::RichText::new(&fp)
+                                .color(theme::TEXT_PRIMARY)
+                                .monospace(),
+                        );
+                        if theme::ghost_button(ui, "📋 Copy") {
+                            ui.ctx().copy_text(status.local_fingerprint.clone());
+                            let mut s = self.state.lock();
+                            s.last_action = Some((
+                                ActionResult {
+                                    ok: true,
+                                    message: "Fingerprint copied to clipboard.".into(),
+                                },
+                                now_millis(),
+                            ));
+                        }
+                    });
+                    ui.end_row();
+                });
         });
 
-        ui.add_space(8.0);
-        ui.separator();
+        ui.add_space(12.0);
 
-        // Connected clients.
-        ui.heading(format!(
-            "Connected clients ({})",
-            status.connected_peers.len()
-        ));
+        // --- Connected clients ---
+        theme::heading(ui, &format!("Clients ({})", status.connected_peers.len()));
+        ui.add_space(6.0);
         if status.connected_peers.is_empty() {
-            if status.listening {
-                ui.label("Waiting for a client to connect…");
-            } else {
-                ui.label("Server is not running. Click Run to start.");
-            }
+            theme::card(ui, |ui| {
+                if status.listening {
+                    theme::dim_label(ui, "Waiting for a client to connect…");
+                } else {
+                    theme::dim_label(ui, "Server is not running. Click Run to start.");
+                }
+            });
         } else {
             for p in &status.connected_peers {
-                ui.group(|ui| {
+                theme::card(ui, |ui| {
                     ui.horizontal(|ui| {
-                        ui.label("●");
-                        ui.label(&p.name);
-                        ui.monospace(&p.peer_id);
+                        ui.painter().circle_filled(
+                            ui.next_widget_position() + egui::vec2(5.0, 8.0),
+                            4.0,
+                            theme::SUCCESS,
+                        );
+                        ui.add_space(12.0);
+                        ui.label(
+                            egui::RichText::new(&p.name)
+                                .strong()
+                                .color(theme::TEXT_PRIMARY),
+                        );
+                        ui.label(
+                            egui::RichText::new(&p.peer_id)
+                                .color(theme::TEXT_DIM)
+                                .small()
+                                .monospace(),
+                        );
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            ui.label(
+                                egui::RichText::new(&format!("rtt {}ms", p.last_rtt_ms))
+                                    .color(theme::TEXT_DIM)
+                                    .small(),
+                            );
+                        });
                     });
-                    ui.label(format!("remote: {}", p.remote_addr));
-                    ui.label(format!(
-                        "connected: {}  •  rtt: {} ms",
-                        humantime(p.connected_secs),
-                        p.last_rtt_ms
-                    ));
+                    ui.add_space(2.0);
+                    ui.label(
+                        egui::RichText::new(&format!(
+                            "remote {}  •  connected {}",
+                            p.remote_addr,
+                            humantime(p.connected_secs)
+                        ))
+                        .color(theme::TEXT_DIM)
+                        .small(),
+                    );
                 });
+                ui.add_space(6.0);
             }
         }
     }
@@ -637,26 +783,50 @@ impl InputSyncApp {
         if age > 8_000 {
             return;
         }
+        ui.add_space(8.0);
         ui.horizontal(|ui| {
-            let color = if ok {
-                egui::Color32::from_rgb(120, 220, 120)
-            } else {
-                egui::Color32::LIGHT_RED
-            };
-            ui.colored_label(
-                color,
-                format!("{}  {}", if ok { "✓" } else { "✗" }, message),
+            let color = if ok { theme::SUCCESS } else { theme::DANGER };
+            ui.label(
+                egui::RichText::new(if ok { "✓" } else { "✗" })
+                    .color(color)
+                    .strong(),
             );
+            ui.label(egui::RichText::new(&message).color(color));
         });
     }
 }
 
 fn render_footer(ui: &mut egui::Ui, status: &StatusReply) {
+    ui.separator();
+    ui.add_space(4.0);
     ui.horizontal(|ui| {
-        ui.label(format!("v{}", status.version));
-        ui.separator();
-        ui.label("Your fingerprint:");
-        ui.monospace(&status.local_fingerprint);
+        ui.label(
+            egui::RichText::new(format!("InputSync v{}", status.version))
+                .color(theme::TEXT_DIM)
+                .small(),
+        );
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            let fp = if status.local_fingerprint.len() > 24 {
+                format!(
+                    "{}…{}",
+                    &status.local_fingerprint[..8],
+                    &status.local_fingerprint[status.local_fingerprint.len() - 8..]
+                )
+            } else {
+                status.local_fingerprint.clone()
+            };
+            ui.label(
+                egui::RichText::new(&fp)
+                    .color(theme::TEXT_DIM)
+                    .small()
+                    .monospace(),
+            );
+            ui.label(
+                egui::RichText::new("fingerprint:")
+                    .color(theme::TEXT_DIM)
+                    .small(),
+            );
+        });
     });
 }
 
