@@ -208,7 +208,17 @@ fn drain_thread_main(state: Arc<CaptureState>, rx: Receiver<RawEvent>, sink: Box
             update_modifiers(&mut mods.lock(), vk, is_down);
         }
 
-        if !state.capturing.load(Ordering::SeqCst) {
+        // Mouse-move events MUST always reach the sink, even when not
+        // capturing: the server's EdgeDetector needs the live cursor
+        // position to detect when the cursor crosses a screen edge and
+        // should be handed off to a client. If we gate mouse-move on
+        // `capturing`, the edge is never detected, `capturing` is never
+        // flipped to true, and the cursor never transfers (chicken-and-egg).
+        // Other event types (keys, buttons, scroll) are only relevant once
+        // we're actively forwarding, so they stay gated.
+        let forward_now =
+            state.capturing.load(Ordering::SeqCst) || matches!(raw, RawEvent::MouseMove { .. });
+        if !forward_now {
             continue;
         }
 
