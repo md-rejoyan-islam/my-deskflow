@@ -303,9 +303,15 @@ unsafe extern "system" fn low_level_keyboard_proc(
             try_push(ev);
         }
         // When capturing, swallow the event so it doesn't reach the
-        // foreground app on this machine.
+        // foreground app on this machine — UNLESS it's the Escape key,
+        // which must always pass through (it's part of the emergency
+        // hotkey Ctrl+Alt+Shift+Esc that forces routing back to local;
+        // if we swallow it, the user is trapped on a frozen screen).
         if HOOK_CAPTURING.load(Ordering::SeqCst) {
-            return LRESULT(1);
+            let is_escape = kb.vkCode == VK_ESCAPE.0 as u32;
+            if !is_escape {
+                return LRESULT(1);
+            }
         }
     }
     let hook = HHOOK(KEYBOARD_HOOK.load(Ordering::SeqCst) as *mut _);
@@ -361,8 +367,17 @@ unsafe extern "system" fn low_level_mouse_proc(
         if let Some(ev) = event {
             try_push(ev);
         }
+        // When capturing, swallow key/button/scroll events so they don't
+        // reach the local foreground app (input goes to the remote peer).
+        // BUT do NOT swallow mouse-move events: the OS must process them so
+        // that SetCursorPos (the edge-detector's warp-back) actually moves
+        // the cursor. If we swallow mouse-moves, the cursor freezes at the
+        // edge pixel and the user is trapped.
         if HOOK_CAPTURING.load(Ordering::SeqCst) {
-            return LRESULT(1);
+            let is_mouse_move = wparam.0 as u32 == WM_MOUSEMOVE;
+            if !is_mouse_move {
+                return LRESULT(1);
+            }
         }
     }
     let hook = HHOOK(MOUSE_HOOK.load(Ordering::SeqCst) as *mut _);

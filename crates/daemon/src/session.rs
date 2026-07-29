@@ -11,8 +11,8 @@ use crate::edge::{EdgeDetector, ForwardTo, RouteDecision};
 use crate::filetransfer_mgr::FileTransferManager;
 use crate::heartbeat::spawn_heartbeat;
 use inputsync_core::{
-    Config, InputEvent, KeyCode, KeyEvent, KeyState, ModifierState, MouseEvent, PeerId, ScreenId,
-    ServerRole,
+    Config, InputEvent, KeyCode, KeyEvent, KeyState, ModifierState, MouseEvent, PeerId, Point,
+    ScreenId, ServerRole,
 };
 use inputsync_network::{ClientEvent, PeerHandle, ServerEvent};
 use inputsync_platform::{traits::EventSink, CursorPos, Platform};
@@ -181,9 +181,16 @@ async fn drain_capture(
     peers: Arc<Mutex<Vec<PeerHandle>>>,
     capture: Arc<dyn inputsync_platform::traits::Capture>,
 ) {
+    // Tracks the last absolute mouse position so we can compute relative
+    // deltas when forwarding moves to the remote peer (the local cursor is
+    // pinned near the edge after a crossing, so absolute coords are useless
+    // to the peer — it needs the movement delta).
+    let mut last_mouse: Option<Point> = None;
+
     while let Some(event) = rx.recv().await {
         if is_emergency(&event) {
             warn!("emergency hotkey: forcing routing to local");
+            last_mouse = None;
             let decision = edge.lock().force_local();
             apply_decision(&decision, &peers, &capture).await;
             continue;
@@ -195,8 +202,33 @@ async fn drain_capture(
         if forward == ForwardTo::Remote {
             let active_peer = peers.lock().first().cloned();
             if let Some(peer) = active_peer {
-                let msg = Message::from_input(event);
+                // Convert absolute mouse-move to a relative delta before
+                // forwarding. The local cursor is pinned near the screen edge
+                // after a crossing, so the peer must see how far the user
+                // *moved*, not where the cursor *is* (which barely changes).
+                let msg = match &event {
+                    InputEvent::Mouse(MouseEvent::Move { x, y }) => {
+                        let cur = Point { x: *x, y: *y };
+                        let (dx, dy) = match last_mouse {
+                            Some(prev) => (cur.x - prev.x, cur.y - prev.y),
+                            None => (0, 0),
+                        };
+                        last_mouse = Some(cur);
+                        // Small deltas (noise from being pinned at the edge)
+                        // are dropped to avoid jitter.
+                        if dx == 0 && dy == 0 {
+                            continue;
+                        }
+                        Message::from_input(InputEvent::Mouse(MouseEvent::MoveRelative { dx, dy }))
+                    }
+                    _ => Message::from_input(event.clone()),
+                };
                 let _ = peer.try_send(msg);
+            }
+        } else {
+            // Track position while local so the first remote delta is correct.
+            if let InputEvent::Mouse(MouseEvent::Move { x, y }) = &event {
+                last_mouse = Some(Point { x: *x, y: *y });
             }
         }
     }
