@@ -72,7 +72,7 @@ jobs:
         # --no-build flag here.
         continue-on-error: true
         run: |
-          cargo generate-rpm --manifest-path crates/daemon/Cargo.toml 2>&1
+          cargo generate-rpm -p crates/daemon 2>&1
           echo "--- exit: $? ---"
           echo '--- searching for produced .rpm ---'
           find target -name '*.rpm' 2>/dev/null || echo '(none found)'
