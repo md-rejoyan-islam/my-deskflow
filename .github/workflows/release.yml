@@ -162,16 +162,18 @@ jobs:
           Write-Host '--- running cargo wix --no-build --nocapture -p inputsync-daemon ---'
           cargo wix --no-build --nocapture -p inputsync-daemon 2>&1
           Write-Host "--- exit code: $LASTEXITCODE ---"
-          Write-Host '--- searching for produced .msi anywhere under target ---'
-          Get-ChildItem -Path target -Recurse -Filter '*.msi' -ErrorAction SilentlyContinue |
+          Write-Host '--- searching for produced .msi everywhere ---'
+          Get-ChildItem -Path . -Recurse -Filter '*.msi' -ErrorAction SilentlyContinue |
             ForEach-Object { Write-Host $_.FullName }
 
       - name: Stage MSI (if any)
         # Copy any MSI we find to msi-out/ so the upload glob is reliable.
+        # Search the ENTIRE repo root (cargo-wix may write outside target/).
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path msi-out | Out-Null
-          Get-ChildItem -Path target -Recurse -Filter '*.msi' -ErrorAction SilentlyContinue |
+          Get-ChildItem -Path . -Recurse -Filter '*.msi' -ErrorAction SilentlyContinue |
+            Where-Object { $_.FullName -notmatch 'msi-out' } |
             ForEach-Object { Copy-Item $_.FullName -Destination msi-out/ -Force }
           Write-Host '--- msi-out contents ---'
           Get-ChildItem -Path msi-out -ErrorAction SilentlyContinue | Format-Table Name
@@ -198,6 +200,7 @@ jobs:
           path: |
             inputsync-*.zip
             msi-out/*.msi
+            target/wix/*.msi
 
   release:
     name: Publish GitHub Release
