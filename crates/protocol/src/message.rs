@@ -14,6 +14,12 @@ pub enum Message {
         x: i32,
         y: i32,
     },
+    /// Relative mouse movement delta (used when the server's cursor is
+    /// pinned at a screen edge after a crossing — the client applies dx/dy).
+    MouseMoveRelative {
+        dx: i32,
+        dy: i32,
+    },
     MouseButton(MouseEvent),
     MouseScroll(MouseEvent),
     KeyEvent(KeyEvent),
@@ -68,6 +74,7 @@ impl Message {
             Self::Welcome(_) => MessageType::Welcome,
             Self::Goodbye(_) => MessageType::Goodbye,
             Self::MouseMove { .. } => MessageType::MouseMove,
+            Self::MouseMoveRelative { .. } => MessageType::MouseMoveRelative,
             Self::MouseButton(_) => MessageType::MouseButton,
             Self::MouseScroll(_) => MessageType::MouseScroll,
             Self::KeyEvent(_) => MessageType::KeyEvent,
@@ -91,16 +98,9 @@ impl Message {
     pub fn from_input(ev: InputEvent) -> Self {
         match ev {
             InputEvent::Mouse(MouseEvent::Move { x, y }) => Self::MouseMove { x, y },
-            InputEvent::Mouse(e @ MouseEvent::MoveRelative { .. }) => Self::MouseMove {
-                x: match &e {
-                    MouseEvent::MoveRelative { dx, .. } => *dx,
-                    _ => 0,
-                },
-                y: match &e {
-                    MouseEvent::MoveRelative { dy, .. } => *dy,
-                    _ => 0,
-                },
-            },
+            InputEvent::Mouse(MouseEvent::MoveRelative { dx, dy }) => {
+                Self::MouseMoveRelative { dx, dy }
+            }
             InputEvent::Mouse(e @ MouseEvent::Button { .. }) => Self::MouseButton(e),
             InputEvent::Mouse(e @ MouseEvent::Scroll(_)) => Self::MouseScroll(e),
             InputEvent::Key(k) => Self::KeyEvent(k),

@@ -415,6 +415,15 @@ async fn inbound_loop(
                     .inject(InputEvent::Mouse(MouseEvent::Move { x, y }))
                     .await;
             }
+            Message::MouseMoveRelative { dx, dy } if is_client => {
+                // Relative delta — the server's cursor is pinned at a screen
+                // edge after a crossing, so it sends movement deltas. Inject
+                // as MoveRelative so the client moves its cursor by dx/dy
+                // rather than warping to an absolute position.
+                let _ = inject
+                    .inject(InputEvent::Mouse(MouseEvent::MoveRelative { dx, dy }))
+                    .await;
+            }
             Message::MouseButton(e) | Message::MouseScroll(e) if is_client => {
                 let _ = inject.inject(InputEvent::Mouse(e)).await;
             }

@@ -60,6 +60,7 @@ pub enum MessageType {
 
     // Input
     MouseMove = 0x0100,
+    MouseMoveRelative = 0x0104,
     MouseButton = 0x0101,
     MouseScroll = 0x0102,
     KeyEvent = 0x0103,
@@ -91,6 +92,7 @@ impl MessageType {
             0x0002 => Self::Welcome,
             0x0003 => Self::Goodbye,
             0x0100 => Self::MouseMove,
+            0x0104 => Self::MouseMoveRelative,
             0x0101 => Self::MouseButton,
             0x0102 => Self::MouseScroll,
             0x0103 => Self::KeyEvent,
