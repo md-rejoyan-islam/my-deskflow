@@ -90,13 +90,16 @@ jobs:
           echo '--- pkg-out contents ---'
           ls -la pkg-out/ 2>/dev/null || echo 'pkg-out is empty'
 
-      - name: Stage binaries
+      - name: Stage binaries + packages
         run: |
           mkdir -p staging
           cp target/release/inputsync-daemon staging/
           cp target/release/inputsync-cli  staging/
           cp target/release/inputsync-gui  staging/
           cp packaging/linux/README.md     staging/README-linux.md
+          # Bundle .deb and .rpm inside the tar.gz for one-click install.
+          find target -name '*.deb' -exec cp -v {} staging/ \; 2>/dev/null || true
+          find target -name '*.rpm' -exec cp -v {} staging/ \; 2>/dev/null || true
 
       - name: Archive Linux binaries
         run: |
@@ -178,13 +181,19 @@ jobs:
           Write-Host '--- msi-out contents ---'
           Get-ChildItem -Path msi-out -ErrorAction SilentlyContinue | Format-Table Name
 
-      - name: Stage binaries
+      - name: Stage binaries + MSI
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path staging | Out-Null
           Copy-Item target/release/inputsync-daemon.exe staging/
           Copy-Item target/release/inputsync-cli.exe  staging/
           Copy-Item target/release/inputsync-gui.exe  staging/
+          # Bundle the MSI installer inside the zip so users get one-click install.
+          Get-ChildItem -Path . -Recurse -Filter '*.msi' -ErrorAction SilentlyContinue |
+            Where-Object { $_.FullName -notmatch 'msi-out' -and $_.FullName -notmatch 'staging' } |
+            ForEach-Object { Copy-Item $_.FullName -Destination staging/ -Force }
+          Write-Host '--- staging contents ---'
+          Get-ChildItem -Path staging | Format-Table Name
 
       - name: Archive Windows binaries
         run: |
