@@ -87,7 +87,12 @@ async fn main() -> Result<()> {
             print_response(&resp);
         }
         Command::Connect { addr } => {
-            let resp = client.request(&IpcRequest::Connect { addr }).await?;
+            let resp = client
+                .request(&IpcRequest::Connect {
+                    addr,
+                    fingerprint: None,
+                })
+                .await?;
             print_response(&resp);
         }
         Command::Disconnect { peer } => {

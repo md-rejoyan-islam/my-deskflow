@@ -17,7 +17,9 @@ pub mod server;
 pub mod stream;
 pub mod tls;
 
-pub use client::{Client, ClientConfig, ClientEvent};
+pub use client::{
+    connect_once, Client, ClientCommand, ClientConfig, ClientController, ClientEvent,
+};
 pub use peer::PeerHandle;
 pub use server::{Server, ServerConfig, ServerEvent};
 pub use stream::{read_message, write_message};

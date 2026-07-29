@@ -1,5 +1,7 @@
 use crate::app::DaemonState;
 use inputsync_ipc::{IpcListener, IpcRequest, IpcResponse, PeerSummary, StatusReply};
+use std::net::SocketAddr;
+use std::str::FromStr;
 use std::sync::Arc;
 use tracing::warn;
 
@@ -62,18 +64,23 @@ fn handle_request(req: IpcRequest, state: &Arc<parking_lot::RwLock<DaemonState>>
             state.write().config = config;
             IpcResponse::Ok
         }
-        IpcRequest::Connect { addr } => {
-            // For v1, surfaces the request to ops as a TODO — actually
-            // dialing requires re-spinning up the network task.
-            tracing::info!(target_addr = %addr, "ipc: connect request");
-            IpcResponse::Error {
-                message: "runtime peer add not yet implemented".into(),
-            }
-        }
+        IpcRequest::Connect { addr, fingerprint } => handle_connect(addr, fingerprint, state),
         IpcRequest::Disconnect { peer } => {
             tracing::info!(%peer, "ipc: disconnect request");
-            IpcResponse::Error {
-                message: "runtime peer remove not yet implemented".into(),
+            // The current controller model supports a single active client
+            // connection, so `peer` is informational. Hang up regardless.
+            let s = state.read();
+            match &s.client_controller {
+                Some(controller) => {
+                    let controller = controller.clone();
+                    tokio::spawn(async move {
+                        controller.hang_up().await;
+                    });
+                    IpcResponse::Ok
+                }
+                None => IpcResponse::Error {
+                    message: "not running as a client; nothing to disconnect".into(),
+                },
             }
         }
         IpcRequest::EmergencyStop => {
@@ -89,4 +96,47 @@ fn handle_request(req: IpcRequest, state: &Arc<parking_lot::RwLock<DaemonState>>
             std::process::exit(0);
         }
     }
+}
+
+/// Build a `ClientConfig` from the daemon's base config + the request's
+/// address/fingerprint, then ask the controller to dial it.
+///
+/// Returns `Ok` once the dial is *dispatched* (the actual handshake runs
+/// asynchronously; watch `GetStatus` for the resulting peer).
+fn handle_connect(
+    addr: String,
+    fingerprint: Option<String>,
+    state: &Arc<parking_lot::RwLock<DaemonState>>,
+) -> IpcResponse {
+    // Parse the target address. Accept either a bare SocketAddr or a
+    // host:port that needs DNS resolution via the network crate's Client.
+    let target: SocketAddr =
+        match SocketAddr::from_str(&addr).or_else(|_| inputsync_network::Client::resolve(&addr)) {
+            Ok(a) => a,
+            Err(e) => {
+                return IpcResponse::Error {
+                    message: format!("invalid address '{addr}': {e}"),
+                }
+            }
+        };
+
+    let s = state.read();
+    let (Some(controller), Some(mut cfg)) = (&s.client_controller, s.client_base.clone()) else {
+        return IpcResponse::Error {
+            message: "daemon is not running as a client; cannot connect".into(),
+        };
+    };
+    cfg.server_addr = target;
+    if let Some(fp) = fingerprint {
+        let fp = fp.trim().to_string();
+        if !fp.is_empty() {
+            cfg.trusted_fingerprints = vec![fp];
+        }
+    }
+    let controller = controller.clone();
+    tracing::info!(addr = %target, "ipc: connect request, dispatching dial");
+    tokio::spawn(async move {
+        controller.dial(cfg).await;
+    });
+    IpcResponse::Ok
 }

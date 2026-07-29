@@ -5,12 +5,12 @@ use crate::session::Session;
 use anyhow::{anyhow, Context, Result};
 use inputsync_core::{Config, PeerId, ServerRole};
 use inputsync_network::{
-    tls, Client, ClientConfig, ClientEvent, Server, ServerConfig, ServerEvent,
+    tls, ClientConfig, ClientController, ClientEvent, Server, ServerConfig, ServerEvent,
 };
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 use tokio::sync::mpsc;
 use tracing::{info, warn};
 
@@ -72,6 +72,8 @@ pub async fn run(args: RunArgs) -> Result<()> {
         capturing: false,
         fingerprint: cert.fingerprint_hex.clone(),
         peers: Vec::new(),
+        client_controller: None,
+        client_base: None,
     }));
 
     // IPC server.
@@ -147,69 +149,78 @@ pub async fn run(args: RunArgs) -> Result<()> {
             net
         }
         ServerRole::Client => {
-            let connect = config
-                .network
-                .connect
-                .ok_or_else(|| anyhow!("client role but no --connect address configured"))?;
-            let client_cfg = ClientConfig {
-                server_addr: connect,
+            // `connect` is now optional: `--role client` with no --connect
+            // starts the daemon idle, ready for a GUI-driven Dial.
+            let initial_connect = config.network.connect;
+
+            // Build the base client config (without a concrete server_addr; it
+            // is filled in per-dial). A zero addr is a placeholder; the IPC
+            // Connect handler overrides it.
+            let client_base = ClientConfig {
+                server_addr: initial_connect.unwrap_or_else(|| "0.0.0.0:0".parse().unwrap()),
                 local_peer_id,
                 local_peer_name: config.peer_name.clone(),
                 trusted_fingerprints: config.network.trusted_fingerprints.clone(),
                 heartbeat_interval_ms: config.network.heartbeat_interval_ms,
             };
-            info!(addr = %connect, "running as client");
+            info!(connect = ?initial_connect, "running as client");
+
+            // The controller owns the long-lived QUIC endpoint + supervisor.
+            let controller = Arc::new(
+                ClientController::new().map_err(|e| anyhow!("client controller bind: {e}"))?,
+            );
+
+            // Take the events receiver BEFORE moving the controller into state.
+            let mut events_rx = controller.take_events().expect("events rx");
+
+            // Expose controller + base config to the IPC layer (GUI Connect/Disconnect).
+            {
+                let mut s = runtime_state.write();
+                s.client_controller = Some(controller.clone());
+                s.client_base = Some(client_base.clone());
+            }
 
             let client_session = session.clone().spawn_client();
             let session_tx = client_session.peer_tx.clone();
             let state = runtime_state_for_session.clone();
 
-            let net = tokio::spawn(async move {
-                let initial = Duration::from_millis(500);
-                let max = Duration::from_secs(30);
-                let mut backoff = initial;
-                loop {
-                    let (raw_tx, mut raw_rx) = mpsc::channel(64);
-                    let session_tx_inner = session_tx.clone();
-                    let state_inner = state.clone();
-                    let fwd = tokio::spawn(async move {
-                        while let Some(evt) = raw_rx.recv().await {
-                            match &evt {
-                                ClientEvent::Connected { handle, .. } => {
-                                    state_inner.write().peers.push(TrackedPeer {
-                                        peer_id: handle.peer_id,
-                                        name: handle.peer_name.clone(),
-                                        remote_addr: handle
-                                            .remote_addr
-                                            .map(|a| a.to_string())
-                                            .unwrap_or_default(),
-                                        connected_at: Instant::now(),
-                                        last_rtt_ms: 0,
-                                    });
-                                }
-                                ClientEvent::Disconnected { peer_id } => {
-                                    state_inner.write().peers.retain(|p| p.peer_id != *peer_id);
-                                }
-                            }
-                            if session_tx_inner.send(evt).await.is_err() {
-                                break;
-                            }
-                        }
-                    });
+            // Initial auto-dial if a connect address was configured at startup
+            // (preserves the original `--connect` behavior).
+            if let Some(addr) = initial_connect {
+                let mut first_cfg = client_base.clone();
+                first_cfg.server_addr = addr;
+                let ctrl = controller.clone();
+                tokio::spawn(async move {
+                    ctrl.dial(first_cfg).await;
+                });
+            }
 
-                    let client = Client::new(client_cfg.clone());
-                    match client.run(raw_tx).await {
-                        Ok(()) => {
-                            info!("client connection ended cleanly; reconnecting");
-                            backoff = initial;
+            let net = tokio::spawn(async move {
+                // Drain controller events -> update DaemonState.peers and
+                // forward to the session. This replaces the per-attempt
+                // forwarder task; there is now exactly one for the daemon's
+                // lifetime (reconnection is GUI-driven, not automatic).
+                while let Some(evt) = events_rx.recv().await {
+                    match &evt {
+                        ClientEvent::Connected { handle, .. } => {
+                            state.write().peers.push(TrackedPeer {
+                                peer_id: handle.peer_id,
+                                name: handle.peer_name.clone(),
+                                remote_addr: handle
+                                    .remote_addr
+                                    .map(|a| a.to_string())
+                                    .unwrap_or_default(),
+                                connected_at: Instant::now(),
+                                last_rtt_ms: 0,
+                            });
                         }
-                        Err(e) => {
-                            warn!(error = %e, "client error; will reconnect");
+                        ClientEvent::Disconnected { peer_id } => {
+                            state.write().peers.retain(|p| p.peer_id != *peer_id);
                         }
                     }
-                    fwd.abort();
-                    tokio::time::sleep(backoff).await;
-                    backoff = (backoff * 2).min(max);
+                    if session_tx.send(evt).await.is_err() {
+                        break;
+                    }
                 }
             });
             net
@@ -280,6 +291,12 @@ pub struct DaemonState {
     pub capturing: bool,
     pub fingerprint: String,
     pub peers: Vec<TrackedPeer>,
+    /// Present only when the daemon runs in client role. The IPC layer uses
+    /// this to satisfy GUI-driven Connect/Disconnect requests.
+    pub client_controller: Option<Arc<ClientController>>,
+    /// The client role in config (copied at startup) so the IPC layer can
+    /// build a fresh `ClientConfig` per dial without re-reading config.
+    pub client_base: Option<ClientConfig>,
 }
 
 #[derive(Clone)]

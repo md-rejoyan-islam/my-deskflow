@@ -19,12 +19,23 @@ pub use transport::{
 pub enum IpcRequest {
     GetStatus,
     GetConfig,
-    UpdateConfig { config: Config },
-    Connect { addr: String },
-    Disconnect { peer: String },
+    UpdateConfig {
+        config: Config,
+    },
+    Connect {
+        addr: String,
+        /// Optional server certificate fingerprint (hex) to pin for this dial.
+        /// When omitted, the dial uses the daemon's configured trusted set.
+        fingerprint: Option<String>,
+    },
+    Disconnect {
+        peer: String,
+    },
     EmergencyStop,
     SubscribeEvents,
-    GetLogs { tail: u32 },
+    GetLogs {
+        tail: u32,
+    },
     Shutdown,
 }
 
