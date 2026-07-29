@@ -131,6 +131,22 @@ impl Config {
             .ok_or_else(|| Error::Config("could not determine config directory".into()))?;
         Ok(dirs.config_dir().join("inputsync.toml"))
     }
+
+    /// Load from `path`, or return [`Config::default`] if the file is missing
+    /// or unreadable. Used by the GUI to detect first-run (no config yet) and
+    /// avoid duplicating the missing-file branch at every call site.
+    pub fn load_or_default(path: &Path) -> Self {
+        match Self::load(path) {
+            Ok(c) => c,
+            Err(_) => Self::default(),
+        }
+    }
+
+    /// Returns true if a config file exists at the default OS path. The GUI
+    /// uses this to decide whether to show the first-run role picker.
+    pub fn exists_at_default_path() -> bool {
+        Self::default_path().map(|p| p.exists()).unwrap_or(false)
+    }
 }
 
 fn hostname_or_unknown() -> String {

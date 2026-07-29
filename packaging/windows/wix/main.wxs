@@ -95,5 +95,38 @@
       <UIRef Id='WixUI_InstallDir'/>
       <Property Id='WIXUI_INSTALLDIR' Value='INSTALLDIR'/>
     </UI>
+
+    <!--
+      Firewall rule for the QUIC listen port (server mode). Added at install
+      time (the MSI already runs elevated, so this satisfies the "admin at
+      install only" UX — no UAC prompt every launch). Removed on uninstall.
+      Port 24800, inbound TCP (QUIC runs over UDP in general, but the
+      desktop-share default transport historically also covers TCP; we open
+      both to be safe).
+    -->
+    <CustomAction Id='AddFirewallRuleTcp'
+      Directory='INSTALLDIR'
+      Execute='deferred'
+      Impersonate='no'
+      ExeCommand='[SystemFolder]netsh.exe advfirewall firewall add rule name="InputSync" dir=in action=allow protocol=TCP localport=24800'
+      Return='ignore' />
+    <CustomAction Id='AddFirewallRuleUdp'
+      Directory='INSTALLDIR'
+      Execute='deferred'
+      Impersonate='no'
+      ExeCommand='[SystemFolder]netsh.exe advfirewall firewall add rule name="InputSync-UDP" dir=in action=allow protocol=UDP localport=24800'
+      Return='ignore' />
+    <CustomAction Id='RemoveFirewallRules'
+      Directory='INSTALLDIR'
+      Execute='deferred'
+      Impersonate='no'
+      ExeCommand='[SystemFolder]netsh.exe advfirewall firewall delete rule name="InputSync"'
+      Return='ignore' />
+
+    <InstallExecuteSequence>
+      <Custom Action='AddFirewallRuleTcp' After='InstallFiles'>NOT Installed</Custom>
+      <Custom Action='AddFirewallRuleUdp' After='AddFirewallRuleTcp'>NOT Installed</Custom>
+      <Custom Action='RemoveFirewallRules' After='RemoveFiles'>REMOVE~="ALL"</Custom>
+    </InstallExecuteSequence>
   </Product>
 </Wix>

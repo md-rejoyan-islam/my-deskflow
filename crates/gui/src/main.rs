@@ -5,11 +5,19 @@
 //!   Connect / Disconnect) plus the live connection state.
 //! - **server** → renders the listening status and the connected-peers list.
 //!
+//! The GUI also owns the daemon process (see [`daemon::DaemonSupervisor`]):
+//! it auto-launches the daemon on startup so the user never needs a terminal,
+//! and on a first run shows a role picker that persists the choice and
+//! restarts the daemon to apply it.
+//!
 //! Status is polled once per second; Connect/Disconnect are fired as one-shot
 //! IPC requests off the tokio runtime so the UI never blocks on the socket.
 
+mod daemon;
+
 use anyhow::{Context, Result};
 use eframe::egui;
+use inputsync_core::{Config, ServerRole};
 use inputsync_ipc::{IpcClient, IpcRequest, IpcResponse, StatusReply};
 use parking_lot::Mutex;
 use std::path::PathBuf;
@@ -58,6 +66,13 @@ struct InputSyncApp {
     /// Form inputs held on the UI thread.
     addr_input: String,
     pin_input: String,
+    /// Owns the daemon child process + finds the binary.
+    supervisor: daemon::DaemonSupervisor,
+    /// True once we've decided a role exists (config file present or user
+    /// picked one). Until then we show the first-run role picker overlay.
+    role_decided: bool,
+    /// Last supervisor error surfaced to the UI (e.g. binary not found).
+    supervisor_error: Option<String>,
 }
 
 #[derive(Default)]
@@ -78,6 +93,9 @@ impl InputSyncApp {
             .enable_all()
             .build()
             .expect("tokio runtime");
+        // First-run detection: if no config exists yet, show the role picker
+        // before launching the daemon (so the daemon starts in the right role).
+        let role_decided = Config::exists_at_default_path();
         Self {
             socket_path,
             state: Arc::new(Mutex::new(SharedState::default())),
@@ -85,6 +103,32 @@ impl InputSyncApp {
             poll_started: false,
             addr_input: String::new(),
             pin_input: String::new(),
+            supervisor: daemon::DaemonSupervisor::new(),
+            role_decided,
+            supervisor_error: None,
+        }
+    }
+
+    /// Apply a first-run role choice: persist it to config and restart the
+    /// daemon so it picks up the new role.
+    fn apply_role_choice(&mut self, role: ServerRole) {
+        let result = (|| -> Result<()> {
+            let path = Config::default_path().context("config path")?;
+            let mut cfg = Config::load_or_default(&path);
+            cfg.role = role;
+            cfg.save(&path).context("save config")?;
+            // Role is read once at daemon startup, so restart to apply it.
+            self.supervisor.restart()?;
+            Ok(())
+        })();
+        match result {
+            Ok(()) => {
+                self.role_decided = true;
+                self.supervisor_error = None;
+            }
+            Err(e) => {
+                self.supervisor_error = Some(format!("{e:#}"));
+            }
         }
     }
 
@@ -187,6 +231,22 @@ impl eframe::App for InputSyncApp {
             self.poll_started = true;
         }
 
+        // Auto-launch the daemon once a role is decided (config present). We
+        // do this BEFORE rendering so the poll loop has something to talk to.
+        // Throttled to once per few seconds to avoid hammering on failure.
+        if self.role_decided {
+            if let Err(e) = self.supervisor.ensure_running_throttled(3) {
+                self.supervisor_error = Some(format!("{e:#}"));
+            } else if self.supervisor.is_running() {
+                // Clear a stale error once the daemon is up again.
+                if self.supervisor_error.is_some() {
+                    self.supervisor_error = None;
+                }
+            }
+            // Keep polling so the UI updates as soon as the daemon responds.
+            ctx.request_repaint_after(Duration::from_millis(500));
+        }
+
         egui::TopBottomPanel::top("top").show(ctx, |ui| {
             ui.horizontal(|ui| {
                 ui.heading("InputSync");
@@ -196,7 +256,37 @@ impl eframe::App for InputSyncApp {
             });
         });
 
+        // First-run role picker overlay: takes over the whole panel until the
+        // user chooses Server or Client.
+        if !self.role_decided {
+            let mut picked: Option<ServerRole> = None;
+            egui::CentralPanel::default().show(ctx, |ui| {
+                picked = render_role_picker(ui, &self.supervisor_error);
+            });
+            if let Some(role) = picked {
+                self.apply_role_choice(role);
+            }
+            return;
+        }
+
         egui::CentralPanel::default().show(ctx, |ui| {
+            // Surface a supervisor error (e.g. binary not found) prominently.
+            if let Some(err) = &self.supervisor_error {
+                ui.colored_label(
+                    egui::Color32::LIGHT_RED,
+                    format!("daemon launch error: {err}"),
+                );
+                ui.label(
+                    "Could not start the daemon automatically. Install InputSync, or if running \
+                     from a build dir, make sure inputsync-daemon is next to inputsync-gui.",
+                );
+                if ui.button("Retry launch").clicked() {
+                    self.supervisor_error = None;
+                    let _ = self.supervisor.restart();
+                }
+                ui.separator();
+            }
+
             // Snapshot under a short lock; render from the copies.
             let (error, status, last_action) = {
                 let s = self.state.lock();
@@ -214,7 +304,15 @@ impl eframe::App for InputSyncApp {
                     egui::Color32::LIGHT_RED,
                     format!("daemon unreachable: {err}"),
                 );
-                ui.label("Start the daemon with `inputsync-daemon run --role server` (or client).");
+                ui.horizontal(|ui| {
+                    ui.label("The daemon isn't responding. You can restart it here:");
+                    if ui.button("Restart daemon").clicked() {
+                        match self.supervisor.restart() {
+                            Ok(()) => self.supervisor_error = None,
+                            Err(e) => self.supervisor_error = Some(format!("{e:#}")),
+                        }
+                    }
+                });
                 return;
             }
             let Some(status) = status else {
@@ -236,6 +334,51 @@ impl eframe::App for InputSyncApp {
             render_footer(ui, &status);
         });
     }
+}
+
+/// The first-run role picker. Takes over the central panel and asks the user
+/// whether this computer should act as a server or a client. Returns the
+/// chosen role, if any (the caller persists it + restarts the daemon).
+fn render_role_picker(ui: &mut egui::Ui, supervisor_error: &Option<String>) -> Option<ServerRole> {
+    let mut picked = None;
+    ui.vertical_centered(|ui| {
+        ui.add_space(40.0);
+        ui.heading("Welcome to InputSync");
+        ui.label("Share one keyboard and mouse across two computers.");
+        ui.add_space(20.0);
+        ui.label("How should this computer be used?");
+        ui.add_space(16.0);
+
+        ui.horizontal(|ui| {
+            ui.add_space(80.0);
+            if ui
+                .add(egui::Button::new("🖥  Server").min_size(egui::vec2(140.0, 60.0)))
+                .on_hover_text(
+                    "This computer's keyboard and mouse will control others. \
+                     Run this on the machine you sit at.",
+                )
+                .clicked()
+            {
+                picked = Some(ServerRole::Server);
+            }
+            if ui
+                .add(egui::Button::new("💻  Client").min_size(egui::vec2(140.0, 60.0)))
+                .on_hover_text(
+                    "This computer will be controlled by a remote server. \
+                     Run this on the machine whose screen you want to reach.",
+                )
+                .clicked()
+            {
+                picked = Some(ServerRole::Client);
+            }
+        });
+
+        if let Some(err) = supervisor_error {
+            ui.add_space(16.0);
+            ui.colored_label(egui::Color32::LIGHT_RED, format!("{err}"));
+        }
+    });
+    picked
 }
 
 impl InputSyncApp {

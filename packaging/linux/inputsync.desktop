@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=InputSync
+GenericName=Keyboard/Mouse Share
+Comment=Share one keyboard and mouse across computers
+Exec=inputsync-gui
+Icon=inputsync
+Terminal=false
+Categories=Utility;Network;DesktopUtility;
+Keywords=keyboard;mouse;share;synergy;barrier;kvm;clipboard;
+StartupNotify=true
+StartupWMClass=InputSync

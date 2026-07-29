@@ -1,0 +1,54 @@
+#!/bin/sh
+# Debian package post-install script for inputsync.
+#
+# Adds the installing user to the `input` and `uinput` groups so the daemon
+# can read `/dev/input/event*` and create a `/dev/uinput` virtual device for
+# input injection (keyboard/mouse) without needing root. The user must log
+# out and back in for the new group membership to take effect.
+#
+# cargo-deb invokes this as: postinst configure <most-recent-version>
+
+set -e
+
+case "$1" in
+    configure)
+        # Ensure both groups exist.
+        if ! getent group input >/dev/null 2>&1; then
+            groupadd --system input
+        fi
+        if ! getent group uinput >/dev/null 2>&1; then
+            groupadd --system uinput
+        fi
+
+        # Add the user who invoked the install (sudo preserves it in SUDO_USER;
+        # apt/dpkg don't, so fall back to the sudoer or skip silently).
+        TARGET_USER="${SUDO_USER:-${USER:-}}"
+        if [ -n "$TARGET_USER" ] && [ "$TARGET_USER" != "root" ]; then
+            if id "$TARGET_USER" >/dev/null 2>&1; then
+                usermod -aG input,uinput "$TARGET_USER" || true
+                echo "InputSync: added '$TARGET_USER' to the input,uinput groups."
+                echo "  >> Please log out and back in for it to take effect."
+            fi
+        else
+            echo "InputSync: could not determine the install user;"
+            echo "  >> manually run: sudo usermod -aG input,uinput <your-user>"
+        fi
+
+        # Ensure the /dev/uinput node is group-accessible. Most distros already
+        # set this via a udev rule; set it defensively here too.
+        if [ -e /dev/uinput ]; then
+            chgrp uinput /dev/uinput 2>/dev/null || true
+            chmod 0660 /dev/uinput 2>/dev/null || true
+        fi
+        ;;
+    abort-upgrade|abort-remove|abort-deconfigure)
+        ;;
+    *)
+        echo "postinst called with unknown argument \`$1'" >&2
+        exit 1
+        ;;
+esac
+
+# dh_installdeb will append the standard debhelper hook here automatically.
+
+exit 0
