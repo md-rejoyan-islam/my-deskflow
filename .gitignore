@@ -1,0 +1,11 @@
+/target
+**/*.rs.bk
+Cargo.lock.bak
+.vscode/
+.idea/
+*.pdb
+*.swp
+.DS_Store
+*.log
+local-config.toml
+certs/

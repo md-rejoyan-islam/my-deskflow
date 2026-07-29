@@ -1,0 +1,26 @@
+[Unit]
+Description=InputSync daemon (cross-machine keyboard/mouse/clipboard share)
+Documentation=https://github.com/inputsync/inputsync
+After=graphical-session.target network-online.target
+Wants=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/inputsync-daemon run
+Restart=on-failure
+RestartSec=3
+# Daemon does NOT need root — uses uinput group on Linux for /dev/uinput.
+SupplementaryGroups=input uinput
+# Hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+
+[Install]
+WantedBy=default.target

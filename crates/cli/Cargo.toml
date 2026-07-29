@@ -1,0 +1,19 @@
+[package]
+name = "inputsync-cli"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "inputsync-cli"
+path = "src/main.rs"
+
+[dependencies]
+inputsync-core = { workspace = true }
+inputsync-ipc = { workspace = true }
+tokio = { workspace = true }
+clap = { workspace = true }
+anyhow = { workspace = true }
+serde_json = { workspace = true }
+toml = { workspace = true }

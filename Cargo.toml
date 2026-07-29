@@ -1,0 +1,106 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/core",
+    "crates/protocol",
+    "crates/platform",
+    "crates/network",
+    "crates/clipboard",
+    "crates/filetransfer",
+    "crates/ipc",
+    "crates/daemon",
+    "crates/cli",
+    "crates/gui",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.75"
+license = "Apache-2.0"
+authors = ["InputSync Contributors"]
+repository = "https://github.com/inputsync/inputsync"
+
+[workspace.dependencies]
+# Internal crates
+inputsync-core = { path = "crates/core" }
+inputsync-protocol = { path = "crates/protocol" }
+inputsync-platform = { path = "crates/platform" }
+inputsync-network = { path = "crates/network" }
+inputsync-clipboard = { path = "crates/clipboard" }
+inputsync-filetransfer = { path = "crates/filetransfer" }
+inputsync-ipc = { path = "crates/ipc" }
+
+# Async / runtime
+tokio = { version = "1", features = ["full"] }
+tokio-util = { version = "0.7", features = ["codec"] }
+futures = "0.3"
+async-trait = "0.1"
+crossbeam-channel = "0.5"
+parking_lot = "0.12"
+
+# Network
+quinn = "0.11"
+rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
+rustls-pemfile = "2"
+rcgen = "0.13"
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+bincode = "1.3"
+toml = "0.8"
+
+# Logging / errors
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+tracing-appender = "0.2"
+thiserror = "1"
+anyhow = "1"
+
+# Utility
+clap = { version = "4", features = ["derive"] }
+uuid = { version = "1", features = ["v4", "serde"] }
+blake3 = "1"
+zstd = "0.13"
+bytes = "1"
+hex = "0.4"
+notify = "6"
+directories = "5"
+bitflags = { version = "2", features = ["serde"] }
+
+# GUI
+eframe = { version = "0.28", default-features = false, features = ["default_fonts", "glow", "wayland", "x11"] }
+egui = "0.28"
+
+# Windows
+windows = { version = "0.58", features = [
+    "Win32_Foundation",
+    "Win32_System_Threading",
+    "Win32_System_LibraryLoader",
+    "Win32_System_DataExchange",
+    "Win32_System_Memory",
+    "Win32_System_Ole",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_UI_Shell",
+    "Win32_Graphics_Gdi",
+    "Win32_Security",
+    "Win32_Storage_FileSystem",
+] }
+windows-service = "0.7"
+
+# Linux
+x11rb = { version = "0.13", features = ["allow-unsafe-code"] }
+input-linux = "0.6"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true
+opt-level = 3
+panic = "abort"
+
+[profile.dev]
+opt-level = 0
+debug = true

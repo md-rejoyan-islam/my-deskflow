@@ -1,0 +1,20 @@
+[package]
+name = "inputsync-gui"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "inputsync-gui"
+path = "src/main.rs"
+
+[dependencies]
+inputsync-core = { workspace = true }
+inputsync-ipc = { workspace = true }
+tokio = { workspace = true }
+egui = { workspace = true }
+eframe = { workspace = true }
+anyhow = { workspace = true }
+parking_lot = { workspace = true }
+serde_json = { workspace = true }
