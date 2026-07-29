@@ -68,6 +68,17 @@ jobs:
         continue-on-error: true
         run: cargo generate-rpm -p inputsync-daemon
 
+      - name: Locate built packages
+        # cargo-deb / cargo-generate-rpm may write under the crate's own
+        # target subdir when invoked with -p. Copy any package we find to a
+        # single known location so the upload glob is reliable.
+        run: |
+          mkdir -p pkg-out
+          find target -type f \( -name '*.deb' -o -name '*.rpm' \) \
+            -exec cp {} pkg-out/ \; 2>/dev/null || true
+          echo '--- packages found ---'
+          ls -la pkg-out/ 2>/dev/null || echo 'no .deb/.rpm produced (best-effort)'
+
       - name: Stage binaries
         run: |
           mkdir -p staging
@@ -85,10 +96,11 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: linux-artifacts
+          if-no-files-found: ignore
           path: |
             inputsync-*.tar.gz
-            target/debian/*.deb
-            target/generate-rpm/*.rpm
+            pkg-out/*.deb
+            pkg-out/*.rpm
 
   build-windows:
     name: Build Windows
@@ -109,10 +121,27 @@ jobs:
         run: cargo install cargo-wix --locked
 
       - name: Build MSI installer (best-effort)
-        # Hand-written WiX template at packaging/windows/wix/main.wxs is the
-        # most iteration-prone piece. The zip below always works regardless.
+        # cargo-wix finds the WiX source at crates/daemon/wix/main.wxs (its
+        # default location). Marked best-effort so a packaging failure never
+        # blocks the always-correct zip release.
         continue-on-error: true
         run: cargo wix --no-build -p inputsync-daemon
+
+      - name: Locate built MSI
+        # cargo-wix may write to target/wix/ (workspace) OR the crate's own
+        # target/wix/ when invoked with -p. Copy any MSI we find to a single
+        # known location so the upload glob is reliable.
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path msi-out | Out-Null
+          Get-ChildItem -Path target -Recurse -Filter '*.msi' -ErrorAction SilentlyContinue |
+            ForEach-Object { Copy-Item $_.FullName -Destination msi-out/ -Force }
+          Write-Host '--- MSI files found ---'
+          Get-ChildItem -Path msi-out -Filter '*.msi' -ErrorAction SilentlyContinue |
+            ForEach-Object { Write-Host $_.Name }
+          if (-not (Get-ChildItem -Path msi-out -Filter '*.msi' -ErrorAction SilentlyContinue)) {
+            Write-Host 'No MSI was produced (cargo-wix step likely failed); continuing.'
+          }
 
       - name: Stage binaries
         shell: pwsh
@@ -131,9 +160,11 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: windows-artifacts
+          # Don't fail the job if no MSI was produced (best-effort).
+          if-no-files-found: ignore
           path: |
             inputsync-*.zip
-            target/wix/*.msi
+            msi-out/*.msi
 
   release:
     name: Publish GitHub Release
