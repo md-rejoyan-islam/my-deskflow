@@ -77,29 +77,26 @@ jobs:
           echo '--- searching for produced .rpm ---'
           find target -name '*.rpm' 2>/dev/null || echo '(none found)'
 
-      - name: Locate built packages
-        # Copy any package we find to pkg-out/ so the upload glob is reliable.
+      - name: Stage binaries + packages into a flat dist/ dir
+        # Copy binaries + every .deb/.rpm into ONE flat directory so the
+        # upload-artifact step produces a flat structure (upload-artifact
+        # preserves relative dirs from the least-common-ancestor, so mixing
+        # pkg-out/ and target/debian/ would nest the files and break the
+        # publish glob). dist/ is also bundled into the tar.gz.
         run: |
-          mkdir -p pkg-out
-          echo '--- raw find for .deb ---'
-          find target -name '*.deb' 2>/dev/null || echo '(no .deb found)'
-          echo '--- raw find for .rpm ---'
-          find target -name '*.rpm' 2>/dev/null || echo '(no .rpm found)'
-          find target -type f \( -name '*.deb' -o -name '*.rpm' \) \
-            -exec cp -v {} pkg-out/ \; 2>/dev/null || true
-          echo '--- pkg-out contents ---'
-          ls -la pkg-out/ 2>/dev/null || echo 'pkg-out is empty'
-
-      - name: Stage binaries + packages
-        run: |
-          mkdir -p staging
+          mkdir -p staging dist
           cp target/release/inputsync-daemon staging/
           cp target/release/inputsync-cli  staging/
           cp target/release/inputsync-gui  staging/
           cp packaging/linux/README.md     staging/README-linux.md
-          # Bundle .deb and .rpm inside the tar.gz for one-click install.
-          find target -name '*.deb' -exec cp -v {} staging/ \; 2>/dev/null || true
-          find target -name '*.rpm' -exec cp -v {} staging/ \; 2>/dev/null || true
+          # Collect every .deb/.rpm into both staging (for the tar.gz) and
+          # dist/ (flat, for the standalone release assets).
+          for f in $(find target -name '*.deb' -o -name '*.rpm' 2>/dev/null); do
+            cp -v "$f" staging/
+            cp -v "$f" dist/
+          done
+          echo '--- dist contents ---'
+          ls -la dist/ 2>/dev/null || echo 'dist is empty'
 
       - name: Archive Linux binaries
         run: |
@@ -111,12 +108,10 @@ jobs:
         with:
           name: linux-artifacts
           if-no-files-found: ignore
+          # Everything flat in dist/ + the tarball at the repo root.
           path: |
             inputsync-*.tar.gz
-            pkg-out/*.deb
-            pkg-out/*.rpm
-            target/debian/*.deb
-            target/generate-rpm/*.rpm
+            dist/*
 
   build-windows:
     name: Build Windows
@@ -169,31 +164,27 @@ jobs:
           Get-ChildItem -Path . -Recurse -Filter '*.msi' -ErrorAction SilentlyContinue |
             ForEach-Object { Write-Host $_.FullName }
 
-      - name: Stage MSI (if any)
-        # Copy any MSI we find to msi-out/ so the upload glob is reliable.
-        # Search the ENTIRE repo root (cargo-wix may write outside target/).
+      - name: Stage binaries + MSI into a flat dist/ dir
+        # Copy binaries + the MSI into ONE flat directory so the
+        # upload-artifact step produces a flat structure (upload-artifact
+        # preserves relative dirs, so msi-out/ vs target/wix/ would nest the
+        # files and break the publish glob). dist/ is also bundled into the zip.
         shell: pwsh
         run: |
-          New-Item -ItemType Directory -Force -Path msi-out | Out-Null
-          Get-ChildItem -Path . -Recurse -Filter '*.msi' -ErrorAction SilentlyContinue |
-            Where-Object { $_.FullName -notmatch 'msi-out' } |
-            ForEach-Object { Copy-Item $_.FullName -Destination msi-out/ -Force }
-          Write-Host '--- msi-out contents ---'
-          Get-ChildItem -Path msi-out -ErrorAction SilentlyContinue | Format-Table Name
-
-      - name: Stage binaries + MSI
-        shell: pwsh
-        run: |
-          New-Item -ItemType Directory -Force -Path staging | Out-Null
+          New-Item -ItemType Directory -Force -Path staging, dist | Out-Null
           Copy-Item target/release/inputsync-daemon.exe staging/
           Copy-Item target/release/inputsync-cli.exe  staging/
           Copy-Item target/release/inputsync-gui.exe  staging/
-          # Bundle the MSI installer inside the zip so users get one-click install.
+          # Collect every .msi into both staging (for the zip) and dist/
+          # (flat, for the standalone release asset).
           Get-ChildItem -Path . -Recurse -Filter '*.msi' -ErrorAction SilentlyContinue |
-            Where-Object { $_.FullName -notmatch 'msi-out' -and $_.FullName -notmatch 'staging' } |
-            ForEach-Object { Copy-Item $_.FullName -Destination staging/ -Force }
-          Write-Host '--- staging contents ---'
-          Get-ChildItem -Path staging | Format-Table Name
+            Where-Object { $_.FullName -notmatch 'staging' -and $_.FullName -notmatch 'dist' } |
+            ForEach-Object {
+              Copy-Item $_.FullName -Destination staging/ -Force
+              Copy-Item $_.FullName -Destination dist/    -Force
+            }
+          Write-Host '--- dist contents ---'
+          Get-ChildItem -Path dist -ErrorAction SilentlyContinue | Format-Table Name
 
       - name: Archive Windows binaries
         run: |
@@ -206,10 +197,10 @@ jobs:
           name: windows-artifacts
           # Don't fail the job if no MSI was produced (best-effort).
           if-no-files-found: ignore
+          # Everything flat in dist/ + the zip at the repo root.
           path: |
             inputsync-*.zip
-            msi-out/*.msi
-            target/wix/*.msi
+            dist/*
 
   release:
     name: Publish GitHub Release
@@ -225,6 +216,10 @@ jobs:
         with:
           path: artifacts
           merge-multiple: true
+
+      - name: List downloaded artifacts
+        # Debug: confirm every package landed flat under artifacts/.
+        run: find artifacts -type f | sort
 
       - name: Publish release
         uses: softprops/action-gh-release@v3
