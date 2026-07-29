@@ -62,8 +62,9 @@ pub async fn run(args: RunArgs) -> Result<()> {
     let started = Instant::now();
     let local_peer_id = PeerId::new();
 
-    let platform =
-        Arc::<dyn inputsync_platform::Platform>::from(inputsync_platform::current().context("platform init")?);
+    let platform = Arc::<dyn inputsync_platform::Platform>::from(
+        inputsync_platform::current().context("platform init")?,
+    );
 
     let runtime_state = Arc::new(parking_lot::RwLock::new(DaemonState {
         config: config.clone(),

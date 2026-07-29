@@ -1,0 +1,164 @@
+# Release pipeline: push a tag like `v0.1.0` -> build Windows + Linux
+# binaries and packages -> publish a GitHub Release with all artifacts.
+#
+# Design principle: zipped binaries are the reliable baseline and always
+# produced. The .deb / .rpm / .msi package steps are best-effort
+# (continue-on-error) so a packaging tooling hiccup never blocks the
+# always-correct zips. Drop continue-on-error once each is confirmed green.
+#
+# Trigger:
+#   git tag v0.1.0
+#   git push origin v0.1.0
+
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build-linux:
+    name: Build Linux
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust (stable)
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry + build artifacts
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install Linux system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libudev-dev \
+            libwayland-dev \
+            libxkbcommon-dev \
+            libgl1-mesa-dev \
+            libx11-dev \
+            libxcb1-dev \
+            libxrandr-dev
+
+      - name: Build release binaries
+        # Produces: inputsync-daemon, inputsync-cli, inputsync-gui
+        run: cargo build --release
+
+      - name: Install cargo-deb
+        run: cargo install cargo-deb --locked
+
+      - name: Build .deb package (best-effort)
+        # Bundle all 3 binaries + the systemd user unit. Configured via
+        # [package.metadata.deb] in crates/daemon/Cargo.toml.
+        continue-on-error: true
+        run: cargo deb -p inputsync-daemon --no-build
+
+      - name: Install cargo-generate-rpm
+        run: cargo install cargo-generate-rpm --locked
+
+      - name: Build .rpm package (best-effort)
+        # Configured via [package.metadata.generate-rpm] in
+        # crates/daemon/Cargo.toml. cargo-generate-rpm builds itself, so no
+        # --no-build flag here.
+        continue-on-error: true
+        run: cargo generate-rpm -p inputsync-daemon
+
+      - name: Stage binaries
+        run: |
+          mkdir -p staging
+          cp target/release/inputsync-daemon staging/
+          cp target/release/inputsync-cli  staging/
+          cp target/release/inputsync-gui  staging/
+          cp packaging/linux/README.md     staging/README-linux.md
+
+      - name: Archive Linux binaries
+        run: |
+          cd staging
+          tar -czf ../inputsync-${{ github.ref_name }}-linux-x86_64.tar.gz *
+
+      - name: Upload artifact bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-artifacts
+          path: |
+            inputsync-*.tar.gz
+            target/debian/*.deb
+            target/generate-rpm/*.rpm
+
+  build-windows:
+    name: Build Windows
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust (stable)
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry + build artifacts
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build release binaries
+        run: cargo build --release
+
+      - name: Install cargo-wix
+        run: cargo install cargo-wix --locked
+
+      - name: Build MSI installer (best-effort)
+        # Hand-written WiX template at packaging/windows/wix/main.wxs is the
+        # most iteration-prone piece. The zip below always works regardless.
+        continue-on-error: true
+        run: cargo wix --no-build -p inputsync-daemon
+
+      - name: Stage binaries
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path staging | Out-Null
+          Copy-Item target/release/inputsync-daemon.exe staging/
+          Copy-Item target/release/inputsync-cli.exe  staging/
+          Copy-Item target/release/inputsync-gui.exe  staging/
+
+      - name: Archive Windows binaries
+        run: |
+          cd staging
+          7z a ../inputsync-${{ github.ref_name }}-windows-x86_64.zip *
+
+      - name: Upload artifact bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-artifacts
+          path: |
+            inputsync-*.zip
+            target/wix/*.msi
+
+  release:
+    name: Publish GitHub Release
+    needs: [build-linux, build-windows]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write   # required by softprops/action-gh-release
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          # Attach every archive and package produced upstream. Globbing is
+          # recursive relative to the artifacts dir.
+          files: |
+            artifacts/*.tar.gz
+            artifacts/*.zip
+            artifacts/*.deb
+            artifacts/*.rpm
+            artifacts/*.msi

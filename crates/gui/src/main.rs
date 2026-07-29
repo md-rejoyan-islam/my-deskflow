@@ -109,7 +109,10 @@ impl eframe::App for InputSyncApp {
         egui::CentralPanel::default().show(ctx, |ui| {
             let s = self.state.lock();
             if let Some(err) = &s.error {
-                ui.colored_label(egui::Color32::LIGHT_RED, format!("daemon unreachable: {err}"));
+                ui.colored_label(
+                    egui::Color32::LIGHT_RED,
+                    format!("daemon unreachable: {err}"),
+                );
                 ui.label("Start the daemon with `inputsync-daemon run --role server`.");
                 return;
             }
@@ -119,23 +122,26 @@ impl eframe::App for InputSyncApp {
                 return;
             };
 
-            egui::Grid::new("kv").striped(true).num_columns(2).show(ui, |ui| {
-                ui.label("Version");
-                ui.label(&status.version);
-                ui.end_row();
-                ui.label("Role");
-                ui.label(&status.role);
-                ui.end_row();
-                ui.label("Uptime");
-                ui.label(humantime(status.uptime_secs));
-                ui.end_row();
-                ui.label("Fingerprint");
-                ui.monospace(&status.local_fingerprint);
-                ui.end_row();
-                ui.label("Capturing");
-                ui.label(if status.capturing { "yes" } else { "no" });
-                ui.end_row();
-            });
+            egui::Grid::new("kv")
+                .striped(true)
+                .num_columns(2)
+                .show(ui, |ui| {
+                    ui.label("Version");
+                    ui.label(&status.version);
+                    ui.end_row();
+                    ui.label("Role");
+                    ui.label(&status.role);
+                    ui.end_row();
+                    ui.label("Uptime");
+                    ui.label(humantime(status.uptime_secs));
+                    ui.end_row();
+                    ui.label("Fingerprint");
+                    ui.monospace(&status.local_fingerprint);
+                    ui.end_row();
+                    ui.label("Capturing");
+                    ui.label(if status.capturing { "yes" } else { "no" });
+                    ui.end_row();
+                });
 
             ui.separator();
             ui.heading(format!("Peers ({})", status.connected_peers.len()));

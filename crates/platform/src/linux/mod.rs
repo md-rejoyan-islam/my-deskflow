@@ -98,11 +98,15 @@ impl Capture for LinuxCapture {
     }
 
     fn cursor_position(&self) -> Result<CursorPos> {
-        Err(Error::Platform("linux cursor query not yet implemented".into()))
+        Err(Error::Platform(
+            "linux cursor query not yet implemented".into(),
+        ))
     }
 
     fn warp_cursor(&self, _pos: CursorPos) -> Result<()> {
-        Err(Error::Platform("linux warp_cursor not yet implemented".into()))
+        Err(Error::Platform(
+            "linux warp_cursor not yet implemented".into(),
+        ))
     }
 }
 

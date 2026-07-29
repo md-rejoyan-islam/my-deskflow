@@ -128,7 +128,13 @@ impl Session {
             let filetransfer = self.filetransfer.clone();
             tokio::spawn(async move {
                 handle_peer_events_server(
-                    peer_rx, peers, edge, platform, cfg, clipboard, filetransfer,
+                    peer_rx,
+                    peers,
+                    edge,
+                    platform,
+                    cfg,
+                    clipboard,
+                    filetransfer,
                 )
                 .await;
             });
@@ -203,7 +209,12 @@ async fn apply_decision(
 ) {
     match decision {
         RouteDecision::Stay => {}
-        RouteDecision::EnterRemote { screen, entry, local_warp, modifiers } => {
+        RouteDecision::EnterRemote {
+            screen,
+            entry,
+            local_warp,
+            modifiers,
+        } => {
             info!(%screen, "cursor crossing to remote screen");
             let active_peer = peers.lock().first().cloned();
             if let Some(peer) = active_peer {
@@ -232,7 +243,9 @@ async fn apply_decision(
                         peer_screen: screen.0,
                     })
                     .await;
-                let _ = peer.send(Message::ModifierSync(ModifierState::empty())).await;
+                let _ = peer
+                    .send(Message::ModifierSync(ModifierState::empty()))
+                    .await;
             }
             capture.set_capturing(false);
         }
@@ -320,12 +333,22 @@ async fn inbound_loop(
     let inject = platform.inject();
     while let Some(msg) = inbound.recv().await {
         match msg {
-            Message::Ping { nonce, timestamp_ms } => {
-                let _ = peer.send(Message::Pong { nonce, timestamp_ms }).await;
+            Message::Ping {
+                nonce,
+                timestamp_ms,
+            } => {
+                let _ = peer
+                    .send(Message::Pong {
+                        nonce,
+                        timestamp_ms,
+                    })
+                    .await;
             }
             Message::Pong { .. } => {}
             Message::MouseMove { x, y } if is_client => {
-                let _ = inject.inject(InputEvent::Mouse(MouseEvent::Move { x, y })).await;
+                let _ = inject
+                    .inject(InputEvent::Mouse(MouseEvent::Move { x, y }))
+                    .await;
             }
             Message::MouseButton(e) | Message::MouseScroll(e) if is_client => {
                 let _ = inject.inject(InputEvent::Mouse(e)).await;
@@ -360,7 +383,10 @@ async fn inbound_loop(
                     warn!(error = %e, "file chunk failed");
                 }
             }
-            Message::FileTransferCancel { transfer_id, reason } => {
+            Message::FileTransferCancel {
+                transfer_id,
+                reason,
+            } => {
                 info!(%transfer_id, %reason, "file transfer cancelled by peer");
             }
             Message::FileAck { .. } => {}
@@ -374,10 +400,7 @@ async fn inbound_loop(
     }
 }
 
-async fn resync_modifiers(
-    inject: &dyn inputsync_platform::traits::Inject,
-    target: ModifierState,
-) {
+async fn resync_modifiers(inject: &dyn inputsync_platform::traits::Inject, target: ModifierState) {
     let _ = inject.release_all_modifiers().await;
     for (flag, code) in [
         (ModifierState::SHIFT, KeyCode::LeftShift),

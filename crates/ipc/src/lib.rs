@@ -60,11 +60,24 @@ pub struct PeerSummary {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum IpcEvent {
-    PeerConnected { peer_id: String, name: String },
-    PeerDisconnected { peer_id: String },
-    CapturingChanged { capturing: bool },
-    FileTransferProgress { transfer_id: u64, bytes: u64, total: u64 },
-    Log { line: String },
+    PeerConnected {
+        peer_id: String,
+        name: String,
+    },
+    PeerDisconnected {
+        peer_id: String,
+    },
+    CapturingChanged {
+        capturing: bool,
+    },
+    FileTransferProgress {
+        transfer_id: u64,
+        bytes: u64,
+        total: u64,
+    },
+    Log {
+        line: String,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

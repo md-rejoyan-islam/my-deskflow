@@ -11,6 +11,8 @@ pub mod screen;
 
 pub use config::{ClipboardConfig, Config, FileTransferConfig, NetworkConfig, ServerRole};
 pub use error::{Error, Result};
-pub use event::{Button, InputEvent, KeyCode, KeyEvent, KeyState, ModifierState, MouseEvent, ScrollDelta};
+pub use event::{
+    Button, InputEvent, KeyCode, KeyEvent, KeyState, ModifierState, MouseEvent, ScrollDelta,
+};
 pub use id::{ClientId, PeerId, ScreenId};
 pub use screen::{EdgeSide, Point, ScreenInfo, ScreenLayout};

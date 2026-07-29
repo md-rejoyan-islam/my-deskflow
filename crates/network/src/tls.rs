@@ -37,8 +37,7 @@ pub fn load_or_generate(dir: &Path) -> Result<CertBundle> {
         let cert_bytes = std::fs::read(&cert_path)?;
         let key_bytes = std::fs::read(&key_path)?;
         let cert = CertificateDer::from(cert_bytes);
-        let key: PrivateKeyDer<'static> =
-            PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(key_bytes));
+        let key: PrivateKeyDer<'static> = PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(key_bytes));
         let fingerprint = sha256_hex(cert.as_ref());
         return Ok(CertBundle {
             cert_chain: vec![cert],

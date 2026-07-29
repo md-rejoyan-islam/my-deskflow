@@ -10,26 +10,55 @@ pub enum Message {
     Welcome(Welcome),
     Goodbye(Goodbye),
 
-    MouseMove { x: i32, y: i32 },
+    MouseMove {
+        x: i32,
+        y: i32,
+    },
     MouseButton(MouseEvent),
     MouseScroll(MouseEvent),
     KeyEvent(KeyEvent),
-    ScreenEnter { x: i32, y: i32, modifiers: ModifierState },
-    ScreenLeave { peer_screen: u32 },
+    ScreenEnter {
+        x: i32,
+        y: i32,
+        modifiers: ModifierState,
+    },
+    ScreenLeave {
+        peer_screen: u32,
+    },
     ModifierSync(ModifierState),
 
-    ClipboardFormats { formats: Vec<ClipboardFormat>, hash: [u8; 32] },
-    ClipboardRequest { format: ClipboardFormat },
+    ClipboardFormats {
+        formats: Vec<ClipboardFormat>,
+        hash: [u8; 32],
+    },
+    ClipboardRequest {
+        format: ClipboardFormat,
+    },
     ClipboardData(ClipboardPayload),
 
     FileOfferStart(FileOffer),
     FileChunk(FileChunk),
-    FileAck { transfer_id: u64, received_through: u64 },
-    FileTransferCancel { transfer_id: u64, reason: String },
+    FileAck {
+        transfer_id: u64,
+        received_through: u64,
+    },
+    FileTransferCancel {
+        transfer_id: u64,
+        reason: String,
+    },
 
-    Ping { nonce: u64, timestamp_ms: u64 },
-    Pong { nonce: u64, timestamp_ms: u64 },
-    Error { code: u32, message: String },
+    Ping {
+        nonce: u64,
+        timestamp_ms: u64,
+    },
+    Pong {
+        nonce: u64,
+        timestamp_ms: u64,
+    },
+    Error {
+        code: u32,
+        message: String,
+    },
 }
 
 impl Message {

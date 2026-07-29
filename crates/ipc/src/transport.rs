@@ -119,8 +119,7 @@ impl IpcConnection {
 }
 
 async fn write_json_line<T: Serialize, W: IpcWrite>(writer: &mut W, val: &T) -> Result<()> {
-    let mut line =
-        serde_json::to_vec(val).map_err(|e| anyhow!("serialize ipc message: {e}"))?;
+    let mut line = serde_json::to_vec(val).map_err(|e| anyhow!("serialize ipc message: {e}"))?;
     line.push(b'\n');
     writer.write_all(&line).await?;
     writer.flush().await?;

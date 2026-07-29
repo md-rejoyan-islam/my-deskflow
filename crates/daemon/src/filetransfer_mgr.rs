@@ -34,7 +34,9 @@ impl FileTransferManager {
         files: Vec<PathBuf>,
         compress: bool,
     ) -> Result<u64> {
-        let manifest = build_manifest(root, &files).await.context("build manifest")?;
+        let manifest = build_manifest(root, &files)
+            .await
+            .context("build manifest")?;
         let transfer_id = TRANSFER_ID_SEQ.fetch_add(1, Ordering::SeqCst);
 
         // Announce on the control channel.

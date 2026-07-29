@@ -1,0 +1,36 @@
+# Normalize line endings: every text file is stored with LF in the repo.
+# Checkouts use LF on Unix and CRLF on Windows (via core.autocrlf / git's
+# built-in handling). This prevents CRLF from corrupting shell snippets in
+# the GitHub Actions workflows and WiX template.
+* text=auto eol=lf
+
+# Explicitly text — Rust source, configs, docs.
+*.rs    text eol=lf
+*.toml  text eol=lf
+*.md    text eol=lf
+*.yml   text eol=lf
+*.yaml  text eol=lf
+*.sh    text eol=lf
+*.service text eol=lf
+LICENSE text eol=lf
+
+# Windows-native files keep CRLF.
+*.bat   text eol=crlf
+*.cmd   text eol=crlf
+*.ps1   text eol=crlf
+
+# WiX source — CRLF is conventional for the Windows installer toolchain.
+*.wxs   text eol=crlf
+
+# Binary assets — never normalize.
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.ico   binary
+*.icns  binary
+*.msi   binary
+*.deb   binary
+*.rpm   binary
+*.zip   binary
+*.tar.gz binary
+*.lock  text eol=lf

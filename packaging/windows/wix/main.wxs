@@ -1,0 +1,99 @@
+<?xml version='1.0' encoding='windows-1252'?>
+<!--
+  InputSync Windows MSI definition (WiX 3).
+
+  Installed via `cargo wix --no-build -p inputsync-daemon` in the release
+  workflow. cargo-wix expects this file at packaging/windows/wix/main.wxs
+  (configured via [package.metadata.wix] in crates/daemon/Cargo.toml) and
+  feeds it the prebuilt binaries from target/release/.
+
+  Installs all three binaries (daemon, cli, gui) to Program Files\InputSync
+  and adds Start Menu shortcuts for the GUI.
+
+  NOTE: hand-written and not yet verified end-to-end against a real WiX
+  toolset build. Marked continue-on-error in release.yml so a packaging
+  failure never blocks the always-correct .zip release.
+-->
+<Wix xmlns='http://schemas.microsoft.com/wix/2006/wi'>
+  <Product
+    Id='*'
+    Name='InputSync'
+    UpgradeCode='8a5c2f9e-1234-4d3b-9c1a-inputsync0001'
+    Manufacturer='InputSync Contributors'
+    Language='1033'
+    Codepage='1252'
+    Version='$(var.Version)'>
+
+    <Package Id='*' Keywords='Installer' Description='InputSync $(var.Version) installer'
+      Manufacturer='InputSync Contributors' InstallerVersion='450' Languages='1033'
+      Compressed='yes' InstallScope='perMachine' />
+
+    <MajorUpgrade Schedule='afterInstallInitialize' DowngradeErrorMessage='A newer version of InputSync is already installed.' />
+    <Media Id='1' Cabinet='InputSync.cab' EmbedCab='yes' />
+
+    <!-- Properties for Add/Remove Programs entry -->
+    <Property Id='ARPCOMMENTS' Value='Cross-machine keyboard, mouse, clipboard and file sharing' />
+    <Property Id='ARPPRODUCTICON' Value='InputSync.ico' />
+    <Property Id='ARPURLINFOABOUT' Value='https://github.com/inputsync/inputsync' />
+
+    <!-- Target directory layout -->
+    <Directory Id='TARGETDIR' Name='SourceDir'>
+      <Directory Id='ProgramFiles64Folder' Name='PFiles'>
+        <Directory Id='INSTALLDIR' Name='InputSync'>
+        </Directory>
+      </Directory>
+
+      <!-- Start Menu shortcuts -->
+      <Directory Id='ProgramMenuFolder' Name='Programs'>
+        <Directory Id='ApplicationProgramsFolder' Name='InputSync'/>
+      </Directory>
+    </Directory>
+
+    <!-- Files: all three binaries into Program Files\InputSync -->
+    <DirectoryRef Id='INSTALLDIR'>
+      <Component Id='DaemonBinary' Guid='*' Win64='yes'>
+        <File Id='DaemonExe' Name='inputsync-daemon.exe' DiskId='1' Source='$(var.BuildDir)\inputsync-daemon.exe' KeyPath='yes'/>
+      </Component>
+      <Component Id='CliBinary' Guid='*' Win64='yes'>
+        <File Id='CliExe' Name='inputsync-cli.exe' DiskId='1' Source='$(var.BuildDir)\inputsync-cli.exe' KeyPath='yes'/>
+      </Component>
+      <Component Id='GuiBinary' Guid='*' Win64='yes'>
+        <File Id='GuiExe' Name='inputsync-gui.exe' DiskId='1' Source='$(var.BuildDir)\inputsync-gui.exe' KeyPath='yes'/>
+      </Component>
+    </DirectoryRef>
+
+    <!-- Start Menu shortcut to the GUI -->
+    <DirectoryRef Id='ApplicationProgramsFolder'>
+      <Component Id='GuiShortcut' Guid='*' Win64='yes'>
+        <Shortcut Id='GuiStartMenuShortcut'
+          Name='InputSync'
+          Target='[INSTALLDIR]inputsync-gui.exe'
+          WorkingDirectory='INSTALLDIR'
+          Icon='InputSync.ico'
+          Advertise='no' />
+        <RemoveFolder Id='ApplicationProgramsFolder' On='uninstall'/>
+        <RegistryValue Root='HKCU' Key='Software\InputSync' Name='installed' Type='integer' Value='1' KeyPath='yes'/>
+      </Component>
+    </DirectoryRef>
+
+    <Icon Id='InputSync.ico' SourceFile='$(var.ProjectDir)\..\..\packaging\icons\inputsync.ico'/>
+
+    <!-- Feature tree -->
+    <Feature Id='Complete' Title='InputSync' Level='1' Description='Complete package.'
+      Display='expand' ConfigurableDirectory='INSTALLDIR'>
+      <Feature Id='Binaries' Title='Binaries' Level='1' Description='Application binaries.'>
+        <ComponentRef Id='DaemonBinary'/>
+        <ComponentRef Id='CliBinary'/>
+        <ComponentRef Id='GuiBinary'/>
+      </Feature>
+      <Feature Id='Shortcuts' Title='Start Menu shortcut' Level='1' Description='Add a Start Menu shortcut for the GUI.'>
+        <ComponentRef Id='GuiShortcut'/>
+      </Feature>
+    </Feature>
+
+    <UI>
+      <UIRef Id='WixUI_InstallDir'/>
+      <Property Id='WIXUI_INSTALLDIR' Value='INSTALLDIR'/>
+    </UI>
+  </Product>
+</Wix>

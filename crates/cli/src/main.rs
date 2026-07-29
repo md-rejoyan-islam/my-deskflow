@@ -4,7 +4,11 @@ use inputsync_ipc::{IpcClient, IpcRequest, IpcResponse};
 use std::path::PathBuf;
 
 #[derive(Parser, Debug)]
-#[command(name = "inputsync-cli", version, about = "Talk to a running inputsync-daemon")]
+#[command(
+    name = "inputsync-cli",
+    version,
+    about = "Talk to a running inputsync-daemon"
+)]
 struct Cli {
     /// Override the daemon socket path.
     #[arg(short, long)]

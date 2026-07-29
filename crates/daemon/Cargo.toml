@@ -32,3 +32,64 @@ futures = { workspace = true }
 
 [target.'cfg(windows)'.dependencies]
 windows-service = { workspace = true }
+
+# ---------------------------------------------------------------------------
+# Packaging metadata.
+#
+# This package (inputsync-daemon) is the "packaging host": cargo-deb,
+# cargo-generate-rpm, and cargo-wix all build their installers from one
+# crate, so we bundle ALL three binaries (daemon, cli, gui) plus the
+# systemd user unit as package assets here.
+#
+# Non-target/ asset paths are resolved relative to this manifest's dir
+# (crates/daemon/), hence the `../../` prefixes. target/ outputs are
+# auto-resolved to the workspace target dir regardless of crate location.
+# ---------------------------------------------------------------------------
+
+# --- .deb (Debian/Ubuntu) -------------------------------------------------
+[package.metadata.deb]
+name = "inputsync"
+maintainer = "InputSync Contributors <noreply@inputsync.github.io>"
+# Runtime shared libs (the -dev packages are only needed to BUILD).
+depends = "libudev1, libwayland-client0, libxkbcommon0, libgl1, libxcb1, libx11-6, libxrandr2"
+section = "utils"
+priority = "optional"
+assets = [
+    # All three binaries -> /usr/bin/
+    ["target/release/inputsync-daemon", "usr/bin/", "755"],
+    ["target/release/inputsync-cli",    "usr/bin/", "755"],
+    ["target/release/inputsync-gui",    "usr/bin/", "755"],
+    # systemd user unit -> /usr/lib/systemd/user/
+    ["../../packaging/linux/inputsync.service", "usr/lib/systemd/user/", "644"],
+    # Docs
+    ["../../LICENSE",       "usr/share/doc/inputsync/", "644"],
+    ["../../README.md",     "usr/share/doc/inputsync/", "644"],
+]
+
+# --- .rpm (Fedora/RHEL/openSUSE) -----------------------------------------
+[package.metadata.generate-rpm]
+# cargo-generate-rpm auto-derives requirements from the binary's NEEDED libs;
+# we add explicit "recommends" so the installer pulls them in on demand.
+assets = [
+    { source = "target/release/inputsync-daemon", dest = "/usr/bin/inputsync-daemon", mode = "755" },
+    { source = "target/release/inputsync-cli",    dest = "/usr/bin/inputsync-cli",    mode = "755" },
+    { source = "target/release/inputsync-gui",    dest = "/usr/bin/inputsync-gui",    mode = "755" },
+    { source = "../../packaging/linux/inputsync.service", dest = "/usr/lib/systemd/user/inputsync.service", mode = "644" },
+    { source = "../../LICENSE",   dest = "/usr/share/doc/inputsync/LICENSE",   mode = "644" },
+    { source = "../../README.md", dest = "/usr/share/doc/inputsync/README.md", mode = "644" },
+]
+[package.metadata.generate-rpm.requires]
+libudev = "*"
+libwayland-client = "*"
+libxkbcommon = "*"
+libglvnd = "*"
+libxcb = "*"
+libX11 = "*"
+libXrandr = "*"
+
+# --- .msi (Windows) -------------------------------------------------------
+[package.metadata.wix]
+# Points cargo-wix at our hand-written WiX template (installs all 3 exes).
+# The template uses $(var.BuildDir) and $(var.ProjectDir), supplied by
+# cargo-wix at light/candle time.
+input-cabinet = "InputSync.cab"

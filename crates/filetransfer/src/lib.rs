@@ -123,7 +123,9 @@ impl Receiver {
     }
 
     pub async fn begin(&self, transfer_id: u64, manifest: FileManifest) -> Result<()> {
-        tokio::fs::create_dir_all(&self.drop_dir).await.map_err(Error::Io)?;
+        tokio::fs::create_dir_all(&self.drop_dir)
+            .await
+            .map_err(Error::Io)?;
         let mut paths = Vec::with_capacity(manifest.files.len());
         for e in &manifest.files {
             let sanitized = sanitize(&e.relative_path)?;
@@ -180,7 +182,9 @@ impl Receiver {
             .open(&path)
             .await
             .map_err(Error::Io)?;
-        f.seek(std::io::SeekFrom::Start(chunk.offset)).await.map_err(Error::Io)?;
+        f.seek(std::io::SeekFrom::Start(chunk.offset))
+            .await
+            .map_err(Error::Io)?;
         f.write_all(&chunk.data).await.map_err(Error::Io)?;
         f.flush().await.map_err(Error::Io)?;
 
@@ -238,11 +242,7 @@ pub fn sanitize(rel: &str) -> Result<PathBuf> {
     for component in p.components() {
         match component {
             std::path::Component::Normal(_) => {}
-            _ => {
-                return Err(Error::Other(format!(
-                    "suspicious path component in: {rel}"
-                )))
-            }
+            _ => return Err(Error::Other(format!("suspicious path component in: {rel}"))),
         }
     }
     Ok(p)

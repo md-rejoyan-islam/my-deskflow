@@ -9,3 +9,7 @@ Cargo.lock.bak
 *.log
 local-config.toml
 certs/
+
+# Local tooling / scratch dirs
+.zcode/
+node_modules/

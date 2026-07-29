@@ -16,8 +16,7 @@ impl WindowsInject {
     }
 
     fn send(inputs: &[INPUT]) -> Result<()> {
-        let written =
-            unsafe { SendInput(inputs, std::mem::size_of::<INPUT>() as i32) };
+        let written = unsafe { SendInput(inputs, std::mem::size_of::<INPUT>() as i32) };
         if written as usize != inputs.len() {
             return Err(Error::Platform(format!(
                 "SendInput wrote {} of {}",
@@ -36,7 +35,9 @@ impl Inject for WindowsInject {
             InputEvent::Mouse(MouseEvent::Move { x, y }) => move_absolute(x, y),
             InputEvent::Mouse(MouseEvent::MoveRelative { dx, dy }) => move_relative(dx, dy),
             InputEvent::Mouse(MouseEvent::Button { button, state }) => mouse_button(button, state),
-            InputEvent::Mouse(MouseEvent::Scroll(delta)) => mouse_scroll(delta.horizontal, delta.vertical),
+            InputEvent::Mouse(MouseEvent::Scroll(delta)) => {
+                mouse_scroll(delta.horizontal, delta.vertical)
+            }
             InputEvent::Key(k) => key_event(k),
             // Sentinel events have no OS-level injection; handled at higher layer.
             InputEvent::ScreenEnter { .. }
@@ -47,7 +48,14 @@ impl Inject for WindowsInject {
 
     async fn release_all_modifiers(&self) -> Result<()> {
         for vk in [
-            VK_LSHIFT, VK_RSHIFT, VK_LCONTROL, VK_RCONTROL, VK_LMENU, VK_RMENU, VK_LWIN, VK_RWIN,
+            VK_LSHIFT,
+            VK_RSHIFT,
+            VK_LCONTROL,
+            VK_RCONTROL,
+            VK_LMENU,
+            VK_RMENU,
+            VK_LWIN,
+            VK_RWIN,
         ] {
             let _ = key_vk(vk, false);
         }
@@ -56,8 +64,16 @@ impl Inject for WindowsInject {
 }
 
 fn move_absolute(x: i32, y: i32) -> Result<()> {
-    let virtual_w = unsafe { windows::Win32::UI::WindowsAndMessaging::GetSystemMetrics(windows::Win32::UI::WindowsAndMessaging::SM_CXVIRTUALSCREEN) };
-    let virtual_h = unsafe { windows::Win32::UI::WindowsAndMessaging::GetSystemMetrics(windows::Win32::UI::WindowsAndMessaging::SM_CYVIRTUALSCREEN) };
+    let virtual_w = unsafe {
+        windows::Win32::UI::WindowsAndMessaging::GetSystemMetrics(
+            windows::Win32::UI::WindowsAndMessaging::SM_CXVIRTUALSCREEN,
+        )
+    };
+    let virtual_h = unsafe {
+        windows::Win32::UI::WindowsAndMessaging::GetSystemMetrics(
+            windows::Win32::UI::WindowsAndMessaging::SM_CYVIRTUALSCREEN,
+        )
+    };
     let nx = if virtual_w > 0 {
         ((x as i64 * 65535) / virtual_w as i64) as i32
     } else {

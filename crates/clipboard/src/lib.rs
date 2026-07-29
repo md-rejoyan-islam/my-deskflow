@@ -137,7 +137,12 @@ impl ClipboardBackend for StubBackend {
         Ok(self.formats.lock().clone())
     }
     async fn read(&self, format: ClipboardFormat) -> Result<Vec<u8>> {
-        Ok(self.contents.lock().get(&format).cloned().unwrap_or_default())
+        Ok(self
+            .contents
+            .lock()
+            .get(&format)
+            .cloned()
+            .unwrap_or_default())
     }
     async fn write(&self, payload: ClipboardPayload) -> Result<()> {
         let mut formats = self.formats.lock();

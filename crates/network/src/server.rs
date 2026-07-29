@@ -39,7 +39,11 @@ impl Server {
 
         let fingerprint = cfg.cert.fingerprint_hex.clone();
         tracing::info!(addr = %cfg.listen, fingerprint = %fingerprint, "QUIC server listening");
-        Ok(Self { endpoint, fingerprint, cfg })
+        Ok(Self {
+            endpoint,
+            fingerprint,
+            cfg,
+        })
     }
 
     pub fn fingerprint(&self) -> &str {

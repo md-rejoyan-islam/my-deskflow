@@ -1,0 +1,66 @@
+# Continuous integration: build, lint, and test on every push/PR.
+# Runs on Windows and Linux to catch platform-specific regressions early.
+# Release packaging lives in release.yml (tag-triggered).
+
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+env:
+  CARGO_TERM_COLOR: always
+  # Keep incremental compiles fast and fail loudly on test panics.
+  RUST_BACKTRACE: 1
+
+jobs:
+  build-and-test:
+    name: Build & test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust (stable)
+        uses: dtolnay/rust-toolchain@stable
+        # Respects rust-toolchain.toml (stable + rustfmt + clippy).
+
+      - name: Cache cargo registry + build artifacts
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install Linux system dependencies
+        if: runner.os == 'Linux'
+        # libudev-dev  -> input-linux / libevdev
+        # libwayland-dev, libxkbcommon-dev, libgl1-mesa-dev -> eframe (wayland + glow)
+        # libx11-dev, libxcb1-dev, libxrandr-dev -> x11rb + winit x11 backend
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libudev-dev \
+            libwayland-dev \
+            libxkbcommon-dev \
+            libgl1-mesa-dev \
+            libx11-dev \
+            libxcb1-dev \
+            libxrandr-dev
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      - name: Clippy
+        # NOT -D warnings: the project currently has known dead_code warnings
+        # from unfinished v1.0 scaffolding. Tighten to -D warnings once those
+        # code paths are wired up.
+        run: cargo clippy --workspace --all-targets
+
+      - name: Build
+        run: cargo build --workspace --all-targets
+
+      - name: Test
+        run: cargo test --workspace --all-targets

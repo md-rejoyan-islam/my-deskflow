@@ -5,7 +5,9 @@
 //! whether the cursor crossed a configured screen edge and emit a
 //! [`RouteDecision`] for the orchestrator to act on.
 
-use inputsync_core::{EdgeSide, InputEvent, ModifierState, MouseEvent, Point, ScreenId, ScreenLayout};
+use inputsync_core::{
+    EdgeSide, InputEvent, ModifierState, MouseEvent, Point, ScreenId, ScreenLayout,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Route {
@@ -102,18 +104,13 @@ impl EdgeDetector {
                 self.last_point = Point { x: *x, y: *y };
                 match self.route {
                     Route::Local => {
-                        if let Some((side, edge_point)) =
-                            self.cross_local_edge(self.last_point)
-                        {
+                        if let Some((side, edge_point)) = self.cross_local_edge(self.last_point) {
                             if let Some(remote) = self.layout.neighbour_of(self.local, side) {
                                 // Entry point on the far screen: clamp to
                                 // its proportional Y (or X) coordinate.
                                 let entry = entry_point(side, edge_point);
-                                let warp = warp_back_inside(
-                                    side,
-                                    self.local_width,
-                                    self.local_height,
-                                );
+                                let warp =
+                                    warp_back_inside(side, self.local_width, self.local_height);
                                 self.route = Route::Remote(remote);
                                 return (
                                     RouteDecision::EnterRemote {
@@ -164,10 +161,22 @@ pub enum ForwardTo {
 /// Point on the far screen where the cursor should appear after crossing.
 fn entry_point(crossed: EdgeSide, local_pos: Point) -> Point {
     match crossed {
-        EdgeSide::Left => Point { x: 32_000, y: local_pos.y },
-        EdgeSide::Right => Point { x: 0, y: local_pos.y },
-        EdgeSide::Top => Point { x: local_pos.x, y: 32_000 },
-        EdgeSide::Bottom => Point { x: local_pos.x, y: 0 },
+        EdgeSide::Left => Point {
+            x: 32_000,
+            y: local_pos.y,
+        },
+        EdgeSide::Right => Point {
+            x: 0,
+            y: local_pos.y,
+        },
+        EdgeSide::Top => Point {
+            x: local_pos.x,
+            y: 32_000,
+        },
+        EdgeSide::Bottom => Point {
+            x: local_pos.x,
+            y: 0,
+        },
     }
 }
 

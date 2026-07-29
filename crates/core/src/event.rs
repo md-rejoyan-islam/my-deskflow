@@ -6,9 +6,15 @@ pub enum InputEvent {
     Mouse(MouseEvent),
     Key(KeyEvent),
     /// Cursor entered the local screen from a particular edge of a peer.
-    ScreenEnter { x: i32, y: i32, modifiers: ModifierState },
+    ScreenEnter {
+        x: i32,
+        y: i32,
+        modifiers: ModifierState,
+    },
     /// Cursor left the local screen toward a peer.
-    ScreenLeave { peer_screen: u32 },
+    ScreenLeave {
+        peer_screen: u32,
+    },
     /// Periodic resync of held modifiers.
     ModifierSync(ModifierState),
 }
@@ -16,10 +22,19 @@ pub enum InputEvent {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum MouseEvent {
     /// Absolute position, in the logical coordinate space of the source screen.
-    Move { x: i32, y: i32 },
+    Move {
+        x: i32,
+        y: i32,
+    },
     /// Relative motion delta. Used inside games / locked-cursor scenarios.
-    MoveRelative { dx: i32, dy: i32 },
-    Button { button: Button, state: KeyState },
+    MoveRelative {
+        dx: i32,
+        dy: i32,
+    },
+    Button {
+        button: Button,
+        state: KeyState,
+    },
     Scroll(ScrollDelta),
 }
 

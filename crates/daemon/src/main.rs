@@ -15,7 +15,11 @@ mod logging;
 mod session;
 
 #[derive(Parser, Debug)]
-#[command(name = "inputsync-daemon", version, about = "InputSync background service")]
+#[command(
+    name = "inputsync-daemon",
+    version,
+    about = "InputSync background service"
+)]
 struct Cli {
     /// Path to config file. Defaults to OS-specific user config dir.
     #[arg(short, long, global = true)]
@@ -87,15 +91,17 @@ fn main() -> Result<()> {
                 connect,
                 pin,
                 no_ipc,
-            } => app::run(app::RunArgs {
-                config_path: cli.config,
-                role_override: role,
-                listen_override: listen,
-                connect_override: connect,
-                pinned_fingerprints: pin,
-                ipc_enabled: !no_ipc,
-            })
-            .await,
+            } => {
+                app::run(app::RunArgs {
+                    config_path: cli.config,
+                    role_override: role,
+                    listen_override: listen,
+                    connect_override: connect,
+                    pinned_fingerprints: pin,
+                    ipc_enabled: !no_ipc,
+                })
+                .await
+            }
             Command::InitConfig { force } => app::init_config(cli.config, force),
             Command::Fingerprint => app::print_fingerprint(cli.config),
             #[cfg(any(windows, target_os = "linux"))]

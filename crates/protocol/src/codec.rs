@@ -101,8 +101,8 @@ pub fn decode_frame(buf: &[u8]) -> Result<Option<(Message, usize)>, FrameError> 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use inputsync_core::PeerId;
     use crate::message::{Capabilities, Hello};
+    use inputsync_core::PeerId;
 
     #[test]
     fn roundtrip_hello() {
@@ -120,7 +120,10 @@ mod tests {
 
     #[test]
     fn incomplete_returns_none() {
-        let msg = Message::Ping { nonce: 42, timestamp_ms: 0 };
+        let msg = Message::Ping {
+            nonce: 42,
+            timestamp_ms: 0,
+        };
         let bytes = encode_frame(&msg).unwrap();
         // Truncate header
         assert!(decode_frame(&bytes[..4]).unwrap().is_none());
@@ -130,7 +133,11 @@ mod tests {
 
     #[test]
     fn bad_magic_rejected() {
-        let mut bytes = encode_frame(&Message::Ping { nonce: 1, timestamp_ms: 0 }).unwrap();
+        let mut bytes = encode_frame(&Message::Ping {
+            nonce: 1,
+            timestamp_ms: 0,
+        })
+        .unwrap();
         bytes[0] = b'X';
         assert!(matches!(decode_frame(&bytes), Err(FrameError::BadMagic(_))));
     }

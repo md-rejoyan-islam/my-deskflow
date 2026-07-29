@@ -156,7 +156,8 @@ impl Capture for WindowsCapture {
 
     fn warp_cursor(&self, pos: CursorPos) -> Result<()> {
         unsafe {
-            SetCursorPos(pos.x, pos.y).map_err(|e| Error::Platform(format!("SetCursorPos: {e}")))?;
+            SetCursorPos(pos.x, pos.y)
+                .map_err(|e| Error::Platform(format!("SetCursorPos: {e}")))?;
         }
         Ok(())
     }
@@ -183,9 +184,7 @@ fn hook_thread_main(state: Arc<CaptureState>) {
         // arrives, but we still need to spin a GetMessage loop or Windows
         // won't dispatch them.
         let mut msg = MSG::default();
-        while state.running.load(Ordering::SeqCst)
-            && GetMessageW(&mut msg, None, 0, 0).as_bool()
-        {
+        while state.running.load(Ordering::SeqCst) && GetMessageW(&mut msg, None, 0, 0).as_bool() {
             let _ = TranslateMessage(&msg);
             DispatchMessageW(&msg);
         }
@@ -235,14 +234,18 @@ fn drain_thread_main(state: Arc<CaptureState>, rx: Receiver<RawEvent>, sink: Box
             RawEvent::MouseMove { x, y } => Some(InputEvent::Mouse(MouseEvent::Move { x, y })),
             RawEvent::MouseButton { button, down } => Some(InputEvent::Mouse(MouseEvent::Button {
                 button,
-                state: if down { KeyState::Pressed } else { KeyState::Released },
+                state: if down {
+                    KeyState::Pressed
+                } else {
+                    KeyState::Released
+                },
             })),
-            RawEvent::MouseScroll { horizontal, delta } => Some(InputEvent::Mouse(MouseEvent::Scroll(
-                ScrollDelta {
+            RawEvent::MouseScroll { horizontal, delta } => {
+                Some(InputEvent::Mouse(MouseEvent::Scroll(ScrollDelta {
                     horizontal: if horizontal { delta } else { 0 },
                     vertical: if horizontal { 0 } else { delta },
-                },
-            ))),
+                })))
+            }
         };
 
         if let Some(ev) = event {
