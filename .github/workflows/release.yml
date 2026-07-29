@@ -124,15 +124,27 @@ jobs:
       - name: Build release binaries
         run: cargo build --release
 
+      - name: Install WiX Toolset v3 (required by cargo-wix)
+        # cargo-wix 0.3.x only supports WiX v3. The windows-latest runner ships
+        # WiX v5+ by default whose candle.exe rejects v3 namespace XML.
+        # Pin v3.14.1 (latest v3 maintenance release) via Chocolatey.
+        shell: pwsh
+        run: |
+          choco install wixtoolset --version=3.14.1 --no-progress
+          # Prepend WiX v3 bin to GITHUB_PATH so subsequent steps pick it up.
+          $wixBin = "C:\Program Files (x86)\WiX Toolset v3.14\bin"
+          Add-Content -Path $env:GITHUB_PATH -Value $wixBin
+          $env:PATH = "$wixBin;$env:PATH"
+          Write-Host "candle.exe location:"
+          (Get-Command candle.exe).Source
+
       - name: Install cargo-wix
         run: cargo install cargo-wix --locked
 
       - name: Build MSI installer (best-effort, with diagnostics)
         # cargo-wix finds the WiX source at crates/daemon/wix/main.wxs (its
-        # default location). We capture stderr and don't mask the exit code so
-        # real failures surface in the log (the zip below is the reliable
-        # fallback regardless). Marked continue-on-error so a packaging miss
-        # never blocks the always-correct zip.
+        # default location). --nocapture exposes any candle/light errors.
+        # Marked continue-on-error so a packaging miss never blocks the zip.
         continue-on-error: true
         shell: pwsh
         run: |
@@ -140,8 +152,8 @@ jobs:
           cargo wix --version
           Write-Host '--- target/release contents ---'
           Get-ChildItem target/release -Filter 'inputsync-*.exe' | Format-Table Name, Length
-          Write-Host '--- running cargo wix --no-build -p inputsync-daemon ---'
-          cargo wix --no-build -p inputsync-daemon 2>&1
+          Write-Host '--- running cargo wix --no-build --nocapture -p inputsync-daemon ---'
+          cargo wix --no-build --nocapture -p inputsync-daemon 2>&1
           Write-Host "--- exit code: $LASTEXITCODE ---"
           Write-Host '--- searching for produced .msi anywhere under target ---'
           Get-ChildItem -Path target -Recurse -Filter '*.msi' -ErrorAction SilentlyContinue |
