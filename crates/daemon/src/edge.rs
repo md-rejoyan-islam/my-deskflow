@@ -52,6 +52,11 @@ pub struct EdgeDetector {
     /// Margin in px from the screen edge before a crossing is detected.
     /// 1 px is the strict default; some setups want a few px hysteresis.
     edge_threshold: i32,
+    /// When the layout has no explicit neighbour configured, any connected
+    /// peer acts as the neighbour on ALL edges. The server sets this to the
+    /// first connected peer's screen id (set by [`set_auto_peer`]). If None
+    /// AND the layout has no neighbour, edge crossings are clamped (no-op).
+    auto_peer: Option<ScreenId>,
 }
 
 impl EdgeDetector {
@@ -65,7 +70,15 @@ impl EdgeDetector {
             last_point: Point { x: 0, y: 0 },
             modifiers: ModifierState::empty(),
             edge_threshold: 1,
+            auto_peer: None,
         }
+    }
+
+    /// Set the peer that edge crossings route to when the layout has no
+    /// explicit neighbour. The server calls this with the first connected
+    /// client's screen id (None clears it, e.g. when the last peer leaves).
+    pub fn set_auto_peer(&mut self, peer: Option<ScreenId>) {
+        self.auto_peer = peer;
     }
 
     pub fn route(&self) -> Route {
@@ -105,7 +118,15 @@ impl EdgeDetector {
                 match self.route {
                     Route::Local => {
                         if let Some((side, edge_point)) = self.cross_local_edge(self.last_point) {
-                            if let Some(remote) = self.layout.neighbour_of(self.local, side) {
+                            // Resolve the neighbour: explicit layout entry first,
+                            // then the auto-peer fallback (a connected client with
+                            // no manual layout). Without this fallback, a default
+                            // config (no layout.neighbours) would never forward.
+                            let remote = self
+                                .layout
+                                .neighbour_of(self.local, side)
+                                .or(self.auto_peer);
+                            if let Some(remote) = remote {
                                 // Entry point on the far screen: clamp to
                                 // its proportional Y (or X) coordinate.
                                 let entry = entry_point(side, edge_point);

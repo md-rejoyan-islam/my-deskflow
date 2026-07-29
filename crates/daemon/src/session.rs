@@ -269,7 +269,7 @@ fn is_emergency(event: &InputEvent) -> bool {
 async fn handle_peer_events_server(
     mut rx: mpsc::Receiver<ServerEvent>,
     peers: Arc<Mutex<Vec<PeerHandle>>>,
-    _edge: Arc<Mutex<EdgeDetector>>,
+    edge: Arc<Mutex<EdgeDetector>>,
     platform: Arc<dyn Platform>,
     cfg: Config,
     clipboard: Arc<ClipboardManager>,
@@ -280,6 +280,10 @@ async fn handle_peer_events_server(
             ServerEvent::Connected { handle, inbound } => {
                 info!(peer_id = %handle.peer_id, name = %handle.peer_name, "peer connected");
                 peers.lock().push(handle.clone());
+                // Auto-route edge crossings to this peer when no explicit
+                // layout is configured (the default). ScreenId(1) is the id
+                // the server assigns to the first client (server.rs).
+                edge.lock().set_auto_peer(Some(ScreenId(1)));
                 spawn_heartbeat(handle.clone(), cfg.network.heartbeat_interval_ms);
                 let platform = platform.clone();
                 let clipboard = clipboard.clone();
@@ -291,6 +295,11 @@ async fn handle_peer_events_server(
             ServerEvent::Disconnected { peer_id } => {
                 info!(%peer_id, "peer disconnected");
                 peers.lock().retain(|p| p.peer_id != peer_id);
+                // If no peers remain, clear the auto-peer so edge crossings
+                // are no-ops again (don't route into a void).
+                if peers.lock().is_empty() {
+                    edge.lock().set_auto_peer(None);
+                }
             }
         }
     }
