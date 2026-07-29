@@ -52,31 +52,38 @@ jobs:
       - name: Install cargo-deb
         run: cargo install cargo-deb --locked
 
-      - name: Build .deb package (best-effort)
+      - name: Build .deb package (best-effort, with diagnostics)
         # Bundle all 3 binaries + the systemd user unit. Configured via
-        # [package.metadata.deb] in crates/daemon/Cargo.toml.
+        # [package.metadata.deb] in crates/daemon/Cargo.toml. Captured stderr
+        # so failures surface in the log; continue-on-error keeps the zip safe.
         continue-on-error: true
-        run: cargo deb -p inputsync-daemon --no-build
+        run: |
+          cargo deb -p inputsync-daemon --no-build 2>&1
+          echo "--- exit: $? ---"
+          echo '--- searching for produced .deb ---'
+          find target -name '*.deb' 2>/dev/null || echo '(none found)'
 
       - name: Install cargo-generate-rpm
         run: cargo install cargo-generate-rpm --locked
 
-      - name: Build .rpm package (best-effort)
+      - name: Build .rpm package (best-effort, with diagnostics)
         # Configured via [package.metadata.generate-rpm] in
         # crates/daemon/Cargo.toml. cargo-generate-rpm builds itself, so no
         # --no-build flag here.
         continue-on-error: true
-        run: cargo generate-rpm -p inputsync-daemon
+        run: |
+          cargo generate-rpm -p inputsync-daemon 2>&1
+          echo "--- exit: $? ---"
+          echo '--- searching for produced .rpm ---'
+          find target -name '*.rpm' 2>/dev/null || echo '(none found)'
 
       - name: Locate built packages
-        # cargo-deb / cargo-generate-rpm may write under the crate's own
-        # target subdir when invoked with -p. Copy any package we find to a
-        # single known location so the upload glob is reliable.
+        # Copy any package we find to pkg-out/ so the upload glob is reliable.
         run: |
           mkdir -p pkg-out
           find target -type f \( -name '*.deb' -o -name '*.rpm' \) \
             -exec cp {} pkg-out/ \; 2>/dev/null || true
-          echo '--- packages found ---'
+          echo '--- pkg-out contents ---'
           ls -la pkg-out/ 2>/dev/null || echo 'no .deb/.rpm produced (best-effort)'
 
       - name: Stage binaries
@@ -120,28 +127,35 @@ jobs:
       - name: Install cargo-wix
         run: cargo install cargo-wix --locked
 
-      - name: Build MSI installer (best-effort)
+      - name: Build MSI installer (best-effort, with diagnostics)
         # cargo-wix finds the WiX source at crates/daemon/wix/main.wxs (its
-        # default location). Marked best-effort so a packaging failure never
-        # blocks the always-correct zip release.
+        # default location). We capture stderr and don't mask the exit code so
+        # real failures surface in the log (the zip below is the reliable
+        # fallback regardless). Marked continue-on-error so a packaging miss
+        # never blocks the always-correct zip.
         continue-on-error: true
-        run: cargo wix --no-build -p inputsync-daemon
+        shell: pwsh
+        run: |
+          Write-Host '--- cargo-wix version ---'
+          cargo wix --version
+          Write-Host '--- target/release contents ---'
+          Get-ChildItem target/release -Filter 'inputsync-*.exe' | Format-Table Name, Length
+          Write-Host '--- running cargo wix --no-build -p inputsync-daemon ---'
+          cargo wix --no-build -p inputsync-daemon 2>&1
+          Write-Host "--- exit code: $LASTEXITCODE ---"
+          Write-Host '--- searching for produced .msi anywhere under target ---'
+          Get-ChildItem -Path target -Recurse -Filter '*.msi' -ErrorAction SilentlyContinue |
+            ForEach-Object { Write-Host $_.FullName }
 
-      - name: Locate built MSI
-        # cargo-wix may write to target/wix/ (workspace) OR the crate's own
-        # target/wix/ when invoked with -p. Copy any MSI we find to a single
-        # known location so the upload glob is reliable.
+      - name: Stage MSI (if any)
+        # Copy any MSI we find to msi-out/ so the upload glob is reliable.
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path msi-out | Out-Null
           Get-ChildItem -Path target -Recurse -Filter '*.msi' -ErrorAction SilentlyContinue |
             ForEach-Object { Copy-Item $_.FullName -Destination msi-out/ -Force }
-          Write-Host '--- MSI files found ---'
-          Get-ChildItem -Path msi-out -Filter '*.msi' -ErrorAction SilentlyContinue |
-            ForEach-Object { Write-Host $_.Name }
-          if (-not (Get-ChildItem -Path msi-out -Filter '*.msi' -ErrorAction SilentlyContinue)) {
-            Write-Host 'No MSI was produced (cargo-wix step likely failed); continuing.'
-          }
+          Write-Host '--- msi-out contents ---'
+          Get-ChildItem -Path msi-out -ErrorAction SilentlyContinue | Format-Table Name
 
       - name: Stage binaries
         shell: pwsh
