@@ -8,8 +8,9 @@
     $(var.CargoTargetBinDir) -> the binary output dir (target/release)
     $(var.Version)           -> the crate version from Cargo.toml
 
-  Invoked in the release workflow as: cargo wix --no-build -p inputsync-daemon
-  (the binaries are already built by the earlier `cargo build --release`).
+  Invoked in the release workflow as:
+    cargo wix -no-build -p inputsync-daemon
+  (the binaries are already built by the earlier cargo build -release).
 
   Installs all three binaries (daemon, cli, gui) to Program Files\InputSync,
   adds a Start Menu shortcut for the GUI, and opens the inbound firewall
